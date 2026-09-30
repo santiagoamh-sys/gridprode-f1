@@ -24,6 +24,7 @@ import {
   INITIAL_ESCUDERIAS,
   INITIAL_PILOTOS,
   INITIAL_GRAND_PRIX,
+  CIRCUIT_IMAGES,
 } from "@/data/f1InitialData";
 import { calcularPuntajePrediccion } from "@/lib/scoringEngine";
 
@@ -131,7 +132,13 @@ export async function getGrandPrixList(): Promise<GrandPrix[]> {
       const firestoreMap = new Map<string, GrandPrix>();
       snapshot.docs.forEach((d) => {
         const gp = d.data() as GrandPrix;
-        firestoreMap.set(gp.id || d.id, { ...gp, id: gp.id || d.id });
+        const id = gp.id || d.id;
+        const circuito_img_url = gp.circuito_img_url || CIRCUIT_IMAGES[id];
+        firestoreMap.set(id, {
+          ...gp,
+          id,
+          ...(circuito_img_url ? { circuito_img_url } : {}),
+        });
       });
 
       // Combinar con INITIAL_GRAND_PRIX por si faltan las carreras desde Singapur en Firestore

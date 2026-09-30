@@ -43,6 +43,7 @@ export interface GrandPrix {
   id: string;
   nombre: string;
   circuito?: string;
+  circuito_img_url?: string;
   pais?: string;
   bandera?: string;
   ronda?: number;

@@ -61,6 +61,37 @@ const createEmptyResultados = (isSprint: boolean): ResultadosOficiales => ({
     : {}),
 });
 
+// URLs oficiales de trazados de circuitos alojados en el CDN de formula1.com
+export const CIRCUIT_IMAGES: Record<string, string> = {
+  "gp-australia-2026":
+    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Australia_Circuit.webp",
+  "gp-azerbaiyan-2026":
+    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Baku_Circuit.webp",
+  "gp-singapur-2026":
+    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Singapore_Circuit.webp",
+  "gp-usa-2026":
+    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/USA_Circuit.webp",
+  "gp-mexico-2026":
+    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Mexico_Circuit.webp",
+  "gp-brasil-2026":
+    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Brazil_Circuit.webp",
+  "gp-las-vegas-2026":
+    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Las_Vegas_Circuit.webp",
+  "gp-catar-2026":
+    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Qatar_Circuit.webp",
+  "gp-abu-dabi-2026":
+    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Abu_Dhabi_Circuit.webp",
+};
+
+export function getCircuitImageUrl(
+  gp?: { id?: string; circuito_img_url?: string } | null
+): string | undefined {
+  if (!gp) return undefined;
+  if (gp.circuito_img_url) return gp.circuito_img_url;
+  if (gp.id && CIRCUIT_IMAGES[gp.id]) return CIRCUIT_IMAGES[gp.id];
+  return undefined;
+}
+
 // Fecha de corte de inicio oficial para pronósticos: Gran Premio de Singapur
 export const SINGAPORE_START_DATE = "2026-09-25T00:00:00Z";
 
@@ -70,6 +101,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     id: "gp-australia-2026",
     nombre: "Gran Premio de Australia",
     circuito: "Albert Park Circuit, Melbourne",
+    circuito_img_url: CIRCUIT_IMAGES["gp-australia-2026"],
     pais: "Australia",
     bandera: "🇦🇺",
     ronda: 1,
@@ -83,6 +115,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     id: "gp-azerbaiyan-2026",
     nombre: "Gran Premio de Azerbaiyán",
     circuito: "Baku City Circuit",
+    circuito_img_url: CIRCUIT_IMAGES["gp-azerbaiyan-2026"],
     pais: "Azerbaiyán",
     bandera: "🇦🇿",
     ronda: 17,
@@ -98,6 +131,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     id: "gp-singapur-2026",
     nombre: "Gran Premio de Singapur",
     circuito: "Marina Bay Street Circuit",
+    circuito_img_url: CIRCUIT_IMAGES["gp-singapur-2026"],
     pais: "Singapur",
     bandera: "🇸🇬",
     ronda: 18,
@@ -111,6 +145,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     id: "gp-usa-2026",
     nombre: "Gran Premio de Estados Unidos",
     circuito: "Circuit of the Americas, Austin",
+    circuito_img_url: CIRCUIT_IMAGES["gp-usa-2026"],
     pais: "Estados Unidos",
     bandera: "🇺🇸",
     ronda: 19,
@@ -124,6 +159,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     id: "gp-mexico-2026",
     nombre: "Gran Premio de la Ciudad de México",
     circuito: "Autódromo Hermanos Rodríguez",
+    circuito_img_url: CIRCUIT_IMAGES["gp-mexico-2026"],
     pais: "México",
     bandera: "🇲🇽",
     ronda: 20,
@@ -137,6 +173,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     id: "gp-brasil-2026",
     nombre: "Gran Premio de São Paulo",
     circuito: "Autódromo José Carlos Pace, Interlagos",
+    circuito_img_url: CIRCUIT_IMAGES["gp-brasil-2026"],
     pais: "Brasil",
     bandera: "🇧🇷",
     ronda: 21,
@@ -150,6 +187,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     id: "gp-las-vegas-2026",
     nombre: "Gran Premio de Las Vegas",
     circuito: "Las Vegas Strip Circuit",
+    circuito_img_url: CIRCUIT_IMAGES["gp-las-vegas-2026"],
     pais: "Estados Unidos",
     bandera: "🇺🇸",
     ronda: 22,
@@ -163,6 +201,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     id: "gp-catar-2026",
     nombre: "Gran Premio de Catar",
     circuito: "Lusail International Circuit",
+    circuito_img_url: CIRCUIT_IMAGES["gp-catar-2026"],
     pais: "Catar",
     bandera: "🇶🇦",
     ronda: 23,
@@ -176,6 +215,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     id: "gp-abu-dabi-2026",
     nombre: "Gran Premio de Abu Dabi",
     circuito: "Yas Marina Circuit",
+    circuito_img_url: CIRCUIT_IMAGES["gp-abu-dabi-2026"],
     pais: "Emiratos Árabes Unidos",
     bandera: "🇦🇪",
     ronda: 24,

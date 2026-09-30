@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { GrandPrix } from "@/types/f1";
 import { usePredictionWizard } from "@/context/PredictionWizardContext";
 import { normalizeDriverList, normalizeDnfCount } from "@/lib/scoringEngine";
+import { getCircuitImageUrl } from "@/data/f1InitialData";
 import {
   Clock,
   Zap,
@@ -20,6 +21,7 @@ interface GrandPrixCardProps {
 export const GrandPrixCard: React.FC<GrandPrixCardProps> = ({ gp }) => {
   const { openWizard } = usePredictionWizard();
   const [showResults, setShowResults] = useState(false);
+  const circuitImgUrl = getCircuitImageUrl(gp);
 
   // Formato de fecha para qualyStartTime
   const qualyDate = new Date(gp.qualyStartTime);
@@ -60,10 +62,25 @@ export const GrandPrixCard: React.FC<GrandPrixCardProps> = ({ gp }) => {
                 {gp.nombre}
               </h3>
             </div>
-            <p className="text-xs text-[#8E8E93]">
-              {gp.ronda ? `Ronda ${gp.ronda} • ` : ""}
-              {gp.circuito || gp.pais}
-            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs text-[#8E8E93]">
+                {gp.ronda ? `Ronda ${gp.ronda} • ` : ""}
+                {gp.circuito || gp.pais}
+              </p>
+              {circuitImgUrl && (
+                <div
+                  className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-[#15151E] border border-[#2D2D38] hover:border-[#E10600]/40 transition-colors shadow-sm shrink-0"
+                  title={`Trazado oficial de ${gp.circuito || gp.nombre}`}
+                >
+                  <img
+                    src={circuitImgUrl}
+                    alt={`Trazado de ${gp.circuito || gp.nombre}`}
+                    className="h-5 w-8 sm:h-6 sm:w-10 object-contain filter brightness-110 drop-shadow contrast-125"
+                    loading="lazy"
+                  />
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Badges de Estado y Sprint */}
@@ -210,7 +227,7 @@ export const GrandPrixCard: React.FC<GrandPrixCardProps> = ({ gp }) => {
         ) : (
           <>
             <Flag className="w-3.5 h-3.5" />
-            <span>Abrir Wizard de Pronóstico</span>
+            <span>CARGAR MI PRONÓSTICO</span>
           </>
         )}
       </button>
