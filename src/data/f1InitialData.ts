@@ -104,7 +104,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     estado: "proximo",
     qualyStartTime: "2026-10-10T13:00:00Z",
     carreraStartTime: "2026-10-11T12:00:00Z",
-    isSprint: false,
+    isSprint: true,
     resultados_oficiales: createEmptyResultados(false),
   },
   {
@@ -117,7 +117,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     estado: "proximo",
     qualyStartTime: "2026-10-17T21:00:00Z",
     carreraStartTime: "2026-10-18T19:00:00Z",
-    isSprint: true,
+    isSprint: false,
     resultados_oficiales: createEmptyResultados(true),
   },
   {
@@ -143,7 +143,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     estado: "proximo",
     qualyStartTime: "2026-11-07T18:00:00Z",
     carreraStartTime: "2026-11-08T17:00:00Z",
-    isSprint: true,
+    isSprint: false,
     resultados_oficiales: createEmptyResultados(true),
   },
   {
@@ -169,7 +169,7 @@ export const INITIAL_GRAND_PRIX: GrandPrix[] = [
     estado: "proximo",
     qualyStartTime: "2026-11-28T18:00:00Z",
     carreraStartTime: "2026-11-29T16:00:00Z",
-    isSprint: true,
+    isSprint: false,
     resultados_oficiales: createEmptyResultados(true),
   },
   {
