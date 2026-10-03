@@ -13,6 +13,8 @@ const nextConfig = {
       "www.formula1.com",
       "firebasestorage.googleapis.com",
       "lh3.googleusercontent.com",
+      "cdn.jsdelivr.net",
+      "upload.wikimedia.org",
     ],
     remotePatterns: [
       {
@@ -33,6 +35,16 @@ const nextConfig = {
       {
         protocol: "https",
         hostname: "lh3.googleusercontent.com",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "cdn.jsdelivr.net",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "upload.wikimedia.org",
         pathname: "/**",
       },
     ],

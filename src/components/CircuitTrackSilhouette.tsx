@@ -33,6 +33,14 @@ export interface CircuitTrackSilhouetteProps {
   size?: "sm" | "md" | "lg";
 }
 
+// Mapeo de fallbacks locales para máxima resiliencia en caso de desconexión o restricciones de red
+const LOCAL_FALLBACKS: Record<string, string> = {
+  "https://cdn.jsdelivr.net/gh/julesr0y/f1-circuits-svg@main/circuits/minimal/white/marina-bay-4.svg":
+    "/circuits/singapore.svg",
+  "https://cdn.jsdelivr.net/gh/julesr0y/f1-circuits-svg@main/circuits/minimal/white/las-vegas-1.svg":
+    "/circuits/las-vegas.svg",
+};
+
 /**
  * Componente visual para renderizar la silueta oficial de la pista de F1
  * en color blanco puro, sin fondo (transparente) y con tamaño de alta visibilidad,
@@ -48,6 +56,11 @@ export const CircuitTrackSilhouette: React.FC<CircuitTrackSilhouetteProps> = ({
   size = "md",
 }) => {
   const silhouetteUrl = silueta || src;
+  const [currentSrc, setCurrentSrc] = React.useState<string | null>(silhouetteUrl || null);
+
+  React.useEffect(() => {
+    setCurrentSrc(silhouetteUrl || null);
+  }, [silhouetteUrl]);
 
   // Tamaños aumentados para que la pista destaque con mayor presencia manteniendo la proporción
   const sizeMap = {
@@ -56,12 +69,17 @@ export const CircuitTrackSilhouette: React.FC<CircuitTrackSilhouetteProps> = ({
     lg: "h-18 sm:h-20 w-28 sm:w-32 max-w-[130px]",
   };
 
-  const imageElement = silhouetteUrl ? (
+  const imageElement = currentSrc ? (
     <img
-      src={silhouetteUrl}
+      src={currentSrc}
       alt={alt || (titulo ? `Silueta de pista de ${titulo}` : "Silueta de pista F1")}
       className={`object-contain filter brightness-0 invert shrink-0 transition-transform duration-300 hover:scale-105 pointer-events-none select-none ${sizeMap[size]} ${className}`}
       loading="lazy"
+      onError={() => {
+        if (currentSrc && LOCAL_FALLBACKS[currentSrc] && currentSrc !== LOCAL_FALLBACKS[currentSrc]) {
+          setCurrentSrc(LOCAL_FALLBACKS[currentSrc]);
+        }
+      }}
     />
   ) : null;
 
