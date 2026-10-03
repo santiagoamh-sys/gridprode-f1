@@ -10,11 +10,15 @@ import {
   User,
   Zap,
   Flame,
-  AlertTriangle,
   Medal,
   Activity,
   CheckCircle2,
 } from "lucide-react";
+import { fetchDriverStats } from "@/services/driverStatsService";
+
+// Re-exportamos para máxima conveniencia y compatibilidad modular
+export { fetchDriverStats };
+export type { DriverStats };
 
 export interface DriverModalProps {
   driver: Piloto | null;
@@ -23,397 +27,6 @@ export interface DriverModalProps {
   onSelectDriver?: (driver: Piloto) => void;
   isSelectable?: boolean;
   isSelected?: boolean;
-}
-
-// Base de datos de prueba realista (mock data) para todos los pilotos de la temporada
-const MOCK_DRIVER_STATS: Record<string, Omit<DriverStats, "driverId">> = {
-  VER: {
-    posicion_campeonato: 1,
-    puntos_campeonato: 332,
-    h2h_qualy: { victorias: 16, derrotas: 1, companero: "Isack Hadjar", companeroId: "HAD" },
-    veces_q1: 0,
-    veces_q2: 1,
-    veces_q3: 16,
-    poles_anio: 8,
-    victorias_anio: 9,
-    dnfs_anio: 1,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 1 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 2 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 1 },
-    ],
-  },
-  HAD: {
-    posicion_campeonato: 14,
-    puntos_campeonato: 22,
-    h2h_qualy: { victorias: 1, derrotas: 16, companero: "Max Verstappen", companeroId: "VER" },
-    veces_q1: 4,
-    veces_q2: 8,
-    veces_q3: 5,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 3,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 11 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 9 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: "DNF" },
-    ],
-  },
-  NOR: {
-    posicion_campeonato: 2,
-    puntos_campeonato: 298,
-    h2h_qualy: { victorias: 11, derrotas: 6, companero: "Oscar Piastri", companeroId: "PIA" },
-    veces_q1: 0,
-    veces_q2: 1,
-    veces_q3: 16,
-    poles_anio: 6,
-    victorias_anio: 3,
-    dnfs_anio: 0,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 2 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 1 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 2 },
-    ],
-  },
-  PIA: {
-    posicion_campeonato: 4,
-    puntos_campeonato: 245,
-    h2h_qualy: { victorias: 6, derrotas: 11, companero: "Lando Norris", companeroId: "NOR" },
-    veces_q1: 0,
-    veces_q2: 3,
-    veces_q3: 14,
-    poles_anio: 1,
-    victorias_anio: 2,
-    dnfs_anio: 1,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 3 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 4 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 3 },
-    ],
-  },
-  LEC: {
-    posicion_campeonato: 3,
-    puntos_campeonato: 260,
-    h2h_qualy: { victorias: 12, derrotas: 5, companero: "Lewis Hamilton", companeroId: "HAM" },
-    veces_q1: 0,
-    veces_q2: 1,
-    veces_q3: 16,
-    poles_anio: 3,
-    victorias_anio: 2,
-    dnfs_anio: 1,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 1 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 3 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 4 },
-    ],
-  },
-  HAM: {
-    posicion_campeonato: 5,
-    puntos_campeonato: 205,
-    h2h_qualy: { victorias: 5, derrotas: 12, companero: "Charles Leclerc", companeroId: "LEC" },
-    veces_q1: 1,
-    veces_q2: 2,
-    veces_q3: 14,
-    poles_anio: 1,
-    victorias_anio: 1,
-    dnfs_anio: 1,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 5 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 5 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 6 },
-    ],
-  },
-  RUS: {
-    posicion_campeonato: 6,
-    puntos_campeonato: 178,
-    h2h_qualy: { victorias: 13, derrotas: 4, companero: "Kimi Antonelli", companeroId: "ANT" },
-    veces_q1: 0,
-    veces_q2: 2,
-    veces_q3: 15,
-    poles_anio: 1,
-    victorias_anio: 1,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 4 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 6 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 5 },
-    ],
-  },
-  ANT: {
-    posicion_campeonato: 9,
-    puntos_campeonato: 64,
-    h2h_qualy: { victorias: 4, derrotas: 13, companero: "George Russell", companeroId: "RUS" },
-    veces_q1: 2,
-    veces_q2: 6,
-    veces_q3: 9,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 10 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 7 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 8 },
-    ],
-  },
-  SAI: {
-    posicion_campeonato: 7,
-    puntos_campeonato: 98,
-    h2h_qualy: { victorias: 10, derrotas: 7, companero: "Alexander Albon", companeroId: "ALB" },
-    veces_q1: 1,
-    veces_q2: 4,
-    veces_q3: 12,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 1,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 7 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 8 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 9 },
-    ],
-  },
-  ALB: {
-    posicion_campeonato: 11,
-    puntos_campeonato: 44,
-    h2h_qualy: { victorias: 7, derrotas: 10, companero: "Carlos Sainz", companeroId: "SAI" },
-    veces_q1: 3,
-    veces_q2: 7,
-    veces_q3: 7,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 8 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 10 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 12 },
-    ],
-  },
-  ALO: {
-    posicion_campeonato: 8,
-    puntos_campeonato: 86,
-    h2h_qualy: { victorias: 14, derrotas: 3, companero: "Lance Stroll", companeroId: "STR" },
-    veces_q1: 1,
-    veces_q2: 5,
-    veces_q3: 11,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 1,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 9 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 7 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 7 },
-    ],
-  },
-  STR: {
-    posicion_campeonato: 13,
-    puntos_campeonato: 28,
-    h2h_qualy: { victorias: 3, derrotas: 14, companero: "Fernando Alonso", companeroId: "ALO" },
-    veces_q1: 6,
-    veces_q2: 8,
-    veces_q3: 3,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 12 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 12 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 11 },
-    ],
-  },
-  COL: {
-    posicion_campeonato: 10,
-    puntos_campeonato: 52,
-    h2h_qualy: { victorias: 10, derrotas: 7, companero: "Pierre Gasly", companeroId: "GAS" },
-    veces_q1: 2,
-    veces_q2: 6,
-    veces_q3: 9,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 6 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 8 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 10 },
-    ],
-  },
-  GAS: {
-    posicion_campeonato: 12,
-    puntos_campeonato: 36,
-    h2h_qualy: { victorias: 7, derrotas: 10, companero: "Franco Colapinto", companeroId: "COL" },
-    veces_q1: 3,
-    veces_q2: 8,
-    veces_q3: 6,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 1,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 13 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 11 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 13 },
-    ],
-  },
-  LAW: {
-    posicion_campeonato: 15,
-    puntos_campeonato: 18,
-    h2h_qualy: { victorias: 10, derrotas: 7, companero: "Arvid Lindblad", companeroId: "LIN" },
-    veces_q1: 5,
-    veces_q2: 9,
-    veces_q3: 3,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 14 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 13 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: "DNF" },
-    ],
-  },
-  LIN: {
-    posicion_campeonato: 18,
-    puntos_campeonato: 6,
-    h2h_qualy: { victorias: 7, derrotas: 10, companero: "Liam Lawson", companeroId: "LAW" },
-    veces_q1: 8,
-    veces_q2: 7,
-    veces_q3: 2,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 3,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 15 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 15 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 14 },
-    ],
-  },
-  OCO: {
-    posicion_campeonato: 16,
-    puntos_campeonato: 16,
-    h2h_qualy: { victorias: 9, derrotas: 8, companero: "Oliver Bearman", companeroId: "BEA" },
-    veces_q1: 6,
-    veces_q2: 8,
-    veces_q3: 3,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 1,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 16 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 14 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 15 },
-    ],
-  },
-  BEA: {
-    posicion_campeonato: 17,
-    puntos_campeonato: 12,
-    h2h_qualy: { victorias: 8, derrotas: 9, companero: "Esteban Ocon", companeroId: "OCO" },
-    veces_q1: 7,
-    veces_q2: 8,
-    veces_q3: 2,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 17 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: "DNF" },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 16 },
-    ],
-  },
-  HUL: {
-    posicion_campeonato: 19,
-    puntos_campeonato: 4,
-    h2h_qualy: { victorias: 11, derrotas: 6, companero: "Gabriel Bortoleto", companeroId: "BOR" },
-    veces_q1: 9,
-    veces_q2: 7,
-    veces_q3: 1,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 18 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 16 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 17 },
-    ],
-  },
-  BOR: {
-    posicion_campeonato: 20,
-    puntos_campeonato: 2,
-    h2h_qualy: { victorias: 6, derrotas: 11, companero: "Nico Hülkenberg", companeroId: "HUL" },
-    veces_q1: 10,
-    veces_q2: 6,
-    veces_q3: 1,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 3,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 19 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 17 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 18 },
-    ],
-  },
-  BOT: {
-    posicion_campeonato: 21,
-    puntos_campeonato: 1,
-    h2h_qualy: { victorias: 9, derrotas: 8, companero: "Checo Perez", companeroId: "PER" },
-    veces_q1: 11,
-    veces_q2: 5,
-    veces_q3: 1,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 3,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 20 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 18 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 19 },
-    ],
-  },
-  PER: {
-    posicion_campeonato: 22,
-    puntos_campeonato: 1,
-    h2h_qualy: { victorias: 8, derrotas: 9, companero: "Valtteri Bottas", companeroId: "BOT" },
-    veces_q1: 11,
-    veces_q2: 5,
-    veces_q3: 1,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: "DNF" },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 19 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 20 },
-    ],
-  },
-};
-
-/**
- * Función que simula la consulta a una base de datos externa con latencia de 1 segundo
- * tal como solicita la especificación técnica.
- */
-export async function fetchDriverStats(driverId: string): Promise<DriverStats> {
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  const known = MOCK_DRIVER_STATS[driverId];
-  if (known) {
-    return {
-      driverId,
-      ...known,
-    };
-  }
-
-  // Generador dinámico para cualquier otro piloto no listado explícitamente
-  return {
-    driverId,
-    posicion_campeonato: 15,
-    puntos_campeonato: 10,
-    h2h_qualy: { victorias: 8, derrotas: 9, companero: "Compañero", companeroId: "COMP" },
-    veces_q1: 6,
-    veces_q2: 8,
-    veces_q3: 3,
-    poles_anio: 0,
-    victorias_anio: 0,
-    dnfs_anio: 2,
-    ultimas_carreras: [
-      { gpNombre: "Italia", gpBandera: "🇮🇹", posicion: 14 },
-      { gpNombre: "Azerbaiyán", gpBandera: "🇦🇿", posicion: 12 },
-      { gpNombre: "Singapur", gpBandera: "🇸🇬", posicion: 15 },
-    ],
-  };
 }
 
 export const DriverModal: React.FC<DriverModalProps> = ({
@@ -428,7 +41,7 @@ export const DriverModal: React.FC<DriverModalProps> = ({
   const [stats, setStats] = useState<DriverStats | null>(null);
   const [loadingStats, setLoadingStats] = useState<boolean>(true);
 
-  // Carga de datos dinámicos al abrir el modal para el piloto seleccionado
+  // Consulta asíncrona robusta combinando API pública y Firestore
   useEffect(() => {
     if (!isOpen || !driver) {
       setStats(null);
@@ -448,8 +61,24 @@ export const DriverModal: React.FC<DriverModalProps> = ({
         }
       })
       .catch((err) => {
-        console.error("Error al cargar estadísticas del piloto:", err);
-        if (isMounted) setLoadingStats(false);
+        console.error("Error al obtener estadísticas del piloto:", err);
+        if (isMounted) {
+          // Si ambas fuentes fallan, proveemos un fallback por defecto sin romper la UI
+          setStats({
+            driverId: driver.id,
+            posicion_campeonato: 0,
+            puntos_campeonato: 0,
+            h2h_qualy: { victorias: 0, derrotas: 0, companero: "Compañero", companeroId: "COMP" },
+            veces_q1: 0,
+            veces_q2: 0,
+            veces_q3: 0,
+            poles_anio: 0,
+            victorias_anio: 0,
+            dnfs_anio: 0,
+            ultimas_carreras: [],
+          });
+          setLoadingStats(false);
+        }
       });
 
     return () => {
@@ -485,16 +114,16 @@ export const DriverModal: React.FC<DriverModalProps> = ({
   const teamColor = escuderia?.color_hex || "#E10600";
 
   // Cálculos para gráfico de clasificación (Q1, Q2, Q3)
-  const totalQualys = stats ? stats.veces_q1 + stats.veces_q2 + stats.veces_q3 : 1;
-  const q3Pct = stats ? Math.round((stats.veces_q3 / totalQualys) * 100) : 0;
-  const q2Pct = stats ? Math.round((stats.veces_q2 / totalQualys) * 100) : 0;
-  const q1Pct = stats ? Math.max(0, 100 - q3Pct - q2Pct) : 0;
+  const totalQualys = stats ? (stats.veces_q1 || 0) + (stats.veces_q2 || 0) + (stats.veces_q3 || 0) : 0;
+  const q3Pct = totalQualys > 0 && stats ? Math.round((stats.veces_q3 / totalQualys) * 100) : 0;
+  const q2Pct = totalQualys > 0 && stats ? Math.round((stats.veces_q2 / totalQualys) * 100) : 0;
+  const q1Pct = totalQualys > 0 ? Math.max(0, 100 - q3Pct - q2Pct) : 0;
 
   // Cálculos para H2H
   const totalH2H = stats
-    ? stats.h2h_qualy.victorias + stats.h2h_qualy.derrotas
-    : 1;
-  const h2hWinPct = stats ? Math.round((stats.h2h_qualy.victorias / totalH2H) * 100) : 50;
+    ? (stats.h2h_qualy?.victorias || 0) + (stats.h2h_qualy?.derrotas || 0)
+    : 0;
+  const h2hWinPct = totalH2H > 0 && stats ? Math.round((stats.h2h_qualy.victorias / totalH2H) * 100) : 50;
 
   return (
     <div
@@ -655,7 +284,7 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                   Debut F1
                 </span>
                 <span className="text-base sm:text-lg font-black text-white font-mono">
-                  {driver.debut_anio || "—"}
+                  {driver.debut_anio ? driver.debut_anio : "—"}
                 </span>
               </div>
 
@@ -673,7 +302,7 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                       (driver.titulos_mundiales || 0) > 0 ? "text-amber-400" : "text-white"
                     }`}
                   >
-                    {driver.titulos_mundiales ?? 0}
+                    {driver.titulos_mundiales !== undefined ? driver.titulos_mundiales : "—"}
                   </span>
                 </div>
               </div>
@@ -684,7 +313,7 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                   Victorias
                 </span>
                 <span className="text-base sm:text-lg font-black text-white font-mono">
-                  {driver.victorias_totales ?? 0}
+                  {driver.victorias_totales !== undefined ? driver.victorias_totales : "—"}
                 </span>
               </div>
 
@@ -694,7 +323,7 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                   Podios
                 </span>
                 <span className="text-base sm:text-lg font-black text-white font-mono">
-                  {driver.podios_totales ?? 0}
+                  {driver.podios_totales !== undefined ? driver.podios_totales : "—"}
                 </span>
               </div>
             </div>
@@ -712,7 +341,7 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                 </h3>
               </div>
               <span className="text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                Datos Clave Pronósticos
+                API + Firebase Sync
               </span>
             </div>
 
@@ -725,10 +354,10 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                 </div>
                 <div>
                   <p className="text-sm font-bold text-white tracking-wide">
-                    Cargando rendimiento de temporada...
+                    Sincronizando rendimiento de temporada...
                   </p>
                   <p className="text-xs text-[#8E8E93] mt-0.5">
-                    Conectando con base de datos de telemetría y pronósticos
+                    Consultando API pública y Firestore en paralelo
                   </p>
                 </div>
               </div>
@@ -747,13 +376,17 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                     <div className="flex items-baseline justify-between mt-1">
                       <div>
                         <span className="text-2xl sm:text-3xl font-black text-white font-mono">
-                          P{stats.posicion_campeonato}
+                          {stats.posicion_campeonato && stats.posicion_campeonato > 0
+                            ? `P${stats.posicion_campeonato}`
+                            : "—"}
                         </span>
                         <span className="text-xs text-zinc-500 ml-1.5">Posición</span>
                       </div>
                       <div className="text-right">
                         <span className="text-xl sm:text-2xl font-black text-amber-400 font-mono">
-                          {stats.puntos_campeonato}
+                          {stats.puntos_campeonato !== undefined && stats.puntos_campeonato !== null
+                            ? stats.puntos_campeonato
+                            : "—"}
                         </span>
                         <span className="text-xs text-zinc-400 ml-1 font-semibold">PTS</span>
                       </div>
@@ -774,7 +407,7 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                           Victorias
                         </span>
                         <span className="text-xl font-black text-white font-mono">
-                          {stats.victorias_anio}
+                          {stats.victorias_anio !== undefined ? stats.victorias_anio : "—"}
                         </span>
                       </div>
                       <div className="bg-[#15151E] p-2.5 rounded-xl border border-white/5">
@@ -782,13 +415,13 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                           Abandonos
                         </span>
                         <span className="text-xl font-black text-rose-400 font-mono">
-                          {stats.dnfs_anio} DNF
+                          {stats.dnfs_anio !== undefined ? `${stats.dnfs_anio} DNF` : "—"}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* C. CLASIFICACIÓN: DUELO H2H Y POLES */}
+                  {/* C. CLASIFICACIÓN: DUELO H2H Y POLES (EXCLUSIVO FIREBASE) */}
                   <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-4 sm:col-span-2 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
@@ -796,12 +429,12 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                           Clasificación (Dato Clave)
                         </span>
                         <span className="text-[11px] text-zinc-500">
-                          Duelo H2H vs {stats.h2h_qualy.companero}
+                          Duelo H2H vs {stats.h2h_qualy?.companero || "Compañero"}
                         </span>
                       </div>
                       <div className="text-right">
                         <span className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-md">
-                          {stats.poles_anio} {stats.poles_anio === 1 ? "Pole" : "Poles"}
+                          {stats.poles_anio ?? 0} {stats.poles_anio === 1 ? "Pole" : "Poles"}
                         </span>
                       </div>
                     </div>
@@ -810,26 +443,26 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                     <div className="space-y-1.5">
                       <div className="flex justify-between text-xs font-mono font-bold">
                         <span className="text-white">
-                          {driver.id} {stats.h2h_qualy.victorias}
+                          {driver.id} {stats.h2h_qualy?.victorias ?? "—"}
                         </span>
                         <span className="text-zinc-500 font-sans text-[11px]">
-                          {h2hWinPct}% efectividad
+                          {totalH2H > 0 ? `${h2hWinPct}% efectividad` : "Sin enfrentamientos"}
                         </span>
                         <span className="text-zinc-400">
-                          {stats.h2h_qualy.derrotas} {stats.h2h_qualy.companeroId}
+                          {stats.h2h_qualy?.derrotas ?? "—"} {stats.h2h_qualy?.companeroId || ""}
                         </span>
                       </div>
                       <div className="w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden flex border border-white/5">
                         <div
                           className="h-full transition-all duration-700"
                           style={{
-                            width: `${h2hWinPct}%`,
-                            backgroundColor: teamColor,
+                            width: `${totalH2H > 0 ? h2hWinPct : 50}%`,
+                            backgroundColor: totalH2H > 0 ? teamColor : "#52525b",
                           }}
                         />
                         <div
                           className="h-full bg-zinc-600 transition-all duration-700"
-                          style={{ width: `${100 - h2hWinPct}%` }}
+                          style={{ width: `${totalH2H > 0 ? 100 - h2hWinPct : 50}%` }}
                         />
                       </div>
                     </div>
@@ -838,7 +471,9 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                     <div className="pt-2 border-t border-[#2D2D38] space-y-2">
                       <div className="flex items-center justify-between text-[11px] font-bold text-zinc-400">
                         <span>Frecuencia en Sesiones de Clasificación</span>
-                        <span className="text-zinc-500 font-mono">{totalQualys} GPs</span>
+                        <span className="text-zinc-500 font-mono">
+                          {totalQualys > 0 ? `${totalQualys} GPs` : "—"}
+                        </span>
                       </div>
 
                       {/* Barra segmentada */}
@@ -864,6 +499,9 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                             title={`Q1: ${stats.veces_q1} veces (${q1Pct}%)`}
                           />
                         )}
+                        {totalQualys === 0 && (
+                          <div className="w-full h-full bg-zinc-800 rounded-sm" />
+                        )}
                       </div>
 
                       {/* Cápsulas visuales de Q1, Q2 y Q3 */}
@@ -873,10 +511,12 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                             Q3 Top 10
                           </span>
                           <span className="text-sm font-black text-white font-mono">
-                            {stats.veces_q3}{" "}
-                            <span className="text-[10px] text-zinc-500 font-normal">
-                              ({q3Pct}%)
-                            </span>
+                            {stats.veces_q3 !== undefined ? stats.veces_q3 : "—"}{" "}
+                            {totalQualys > 0 && (
+                              <span className="text-[10px] text-zinc-500 font-normal">
+                                ({q3Pct}%)
+                              </span>
+                            )}
                           </span>
                         </div>
                         <div className="bg-[#15151E] border border-sky-500/30 rounded-xl p-2 text-center">
@@ -884,10 +524,12 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                             Q2 Out
                           </span>
                           <span className="text-sm font-black text-white font-mono">
-                            {stats.veces_q2}{" "}
-                            <span className="text-[10px] text-zinc-500 font-normal">
-                              ({q2Pct}%)
-                            </span>
+                            {stats.veces_q2 !== undefined ? stats.veces_q2 : "—"}{" "}
+                            {totalQualys > 0 && (
+                              <span className="text-[10px] text-zinc-500 font-normal">
+                                ({q2Pct}%)
+                              </span>
+                            )}
                           </span>
                         </div>
                         <div className="bg-[#15151E] border border-rose-500/30 rounded-xl p-2 text-center">
@@ -895,10 +537,12 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                             Q1 Out
                           </span>
                           <span className="text-sm font-black text-white font-mono">
-                            {stats.veces_q1}{" "}
-                            <span className="text-[10px] text-zinc-500 font-normal">
-                              ({q1Pct}%)
-                            </span>
+                            {stats.veces_q1 !== undefined ? stats.veces_q1 : "—"}{" "}
+                            {totalQualys > 0 && (
+                              <span className="text-[10px] text-zinc-500 font-normal">
+                                ({q1Pct}%)
+                              </span>
+                            )}
                           </span>
                         </div>
                       </div>
@@ -910,16 +554,17 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                     <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2.5">
                       Racha de Resultados (Últimas 3 Carreras)
                     </span>
-                    <div className="grid grid-cols-3 gap-2.5">
-                      {stats.ultimas_carreras.map((c, idx) => (
-                        <div
-                          key={idx}
-                          className="bg-[#15151E] border border-[#2D2D38] rounded-xl p-2.5 text-center flex flex-col justify-center items-center shadow-sm"
-                        >
-                          <span className="text-lg mb-0.5 leading-none">{c.gpBandera}</span>
-                          <span
-                            className={`text-base font-black font-mono ${
-                              c.posicion === 1
+                    {stats.ultimas_carreras && stats.ultimas_carreras.length > 0 ? (
+                      <div className="grid grid-cols-3 gap-2.5">
+                        {stats.ultimas_carreras.map((c, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-[#15151E] border border-[#2D2D38] rounded-xl p-2.5 text-center flex flex-col justify-center items-center shadow-sm"
+                          >
+                            <span className="text-lg mb-0.5 leading-none">{c.gpBandera || "🏁"}</span>
+                            <span
+                              className={`text-base font-black font-mono ${
+                                c.posicion === 1
                                 ? "text-amber-400"
                                 : c.posicion === 2
                                 ? "text-zinc-300"
@@ -930,20 +575,38 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                                 : typeof c.posicion === "number" && c.posicion <= 10
                                 ? "text-emerald-400"
                                 : "text-zinc-400"
-                            }`}
+                              }`}
+                            >
+                              {typeof c.posicion === "number" ? `P${c.posicion}` : (c.posicion || "—")}
+                            </span>
+                            <span className="text-[10px] font-semibold text-zinc-500 truncate max-w-full">
+                              GP {c.gpNombre || "—"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2.5">
+                        {[1, 2, 3].map((slot) => (
+                          <div
+                            key={slot}
+                            className="bg-[#15151E] border border-[#2D2D38] rounded-xl p-2.5 text-center flex flex-col justify-center items-center opacity-60"
                           >
-                            {typeof c.posicion === "number" ? `P${c.posicion}` : c.posicion}
-                          </span>
-                          <span className="text-[10px] font-semibold text-zinc-500 truncate max-w-full">
-                            GP {c.gpNombre}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                            <span className="text-lg mb-0.5 leading-none">🏁</span>
+                            <span className="text-base font-black font-mono text-zinc-500">—</span>
+                            <span className="text-[10px] text-zinc-600">Sin datos</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
-            ) : null}
+            ) : (
+              <div className="py-8 text-center text-zinc-500 text-xs">
+                No se encontraron estadísticas para este piloto.
+              </div>
+            )}
           </div>
         </div>
 

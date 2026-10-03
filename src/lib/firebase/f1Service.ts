@@ -27,6 +27,7 @@ import {
   CIRCUIT_IMAGES,
 } from "@/data/f1InitialData";
 import { calcularPuntajePrediccion } from "@/lib/scoringEngine";
+import { DEFAULT_DRIVERS_STATS } from "@/services/driverStatsService";
 
 /**
  * Popula Firestore con las 11 escuderías, 22 pilotos y el calendario oficial de carreras
@@ -58,6 +59,12 @@ export async function seedFirestoreF1Data(): Promise<{
   INITIAL_GRAND_PRIX.forEach((gp) => {
     const ref = doc(db, "grand_prix", gp.id);
     batch.set(ref, gp, { merge: true });
+  });
+
+  // 4. Estadísticas de pilotos (drivers_stats)
+  Object.values(DEFAULT_DRIVERS_STATS).forEach((stats) => {
+    const ref = doc(db, "drivers_stats", stats.driverId);
+    batch.set(ref, stats, { merge: true });
   });
 
   await batch.commit();
