@@ -25,6 +25,21 @@ interface DriverGridProps {
   enableModal?: boolean;
 }
 
+// Orden de constructores basado en el Campeonato de Constructores 2025, con Cadillac al final
+const TEAM_ORDER = [
+  'McLaren',
+  'Mercedes Benz',
+  'Red Bull Racing',
+  'Scuderia Ferrari',
+  'Williams',
+  'Racing Bull',
+  'Haas',
+  'Alpine',
+  'Aston Martin',
+  'Audi',
+  'Cadillac',
+];
+
 export const DriverGrid: React.FC<DriverGridProps> = ({
   selectedDriverId,
   selectedDriverIds = [],
@@ -53,6 +68,44 @@ export const DriverGrid: React.FC<DriverGridProps> = ({
     ? pilotos.filter((p) => !excludedSet.has(p.id))
     : pilotos;
 
+  // Ordenamiento por escudería (según TEAM_ORDER) y desempate por número de auto
+  const sortedPilotos = React.useMemo(() => {
+    return [...visiblePilotos].sort((a, b) => {
+      const escA = getEscuderia(a.escuderia_id)?.nombre || "";
+      const escB = getEscuderia(b.escuderia_id)?.nombre || "";
+
+      let indexA = TEAM_ORDER.indexOf(escA);
+      let indexB = TEAM_ORDER.indexOf(escB);
+
+      if (indexA === -1) {
+        indexA = TEAM_ORDER.findIndex((name) =>
+          escA.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(escA.toLowerCase())
+        );
+      }
+      if (indexB === -1) {
+        indexB = TEAM_ORDER.findIndex((name) =>
+          escB.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(escB.toLowerCase())
+        );
+      }
+
+      const orderA = indexA !== -1 ? indexA : 999;
+      const orderB = indexB !== -1 ? indexB : 999;
+
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+
+      // Si pertenecen a la misma escudería, se ordenan por su número de auto
+      const numA = typeof a.numero === "number" ? a.numero : 999;
+      const numB = typeof b.numero === "number" ? b.numero : 999;
+      if (numA !== numB) {
+        return numA - numB;
+      }
+
+      return a.nombre.localeCompare(b.nombre);
+    });
+  }, [visiblePilotos, getEscuderia]);
+
   const isMaxReached =
     typeof maxSelections === "number" && selectedSet.size >= maxSelections;
 
@@ -77,7 +130,7 @@ export const DriverGrid: React.FC<DriverGridProps> = ({
             : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 sm:gap-5"
         }`}
       >
-        {visiblePilotos.map((p) => {
+        {sortedPilotos.map((p) => {
           const escuderia = getEscuderia(p.escuderia_id);
           const teamColor = escuderia?.color_hex || "#3671C6";
           const isSelected = selectedSet.has(p.id);
