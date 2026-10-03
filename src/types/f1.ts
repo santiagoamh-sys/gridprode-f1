@@ -9,6 +9,42 @@ export interface Piloto {
   nombre: string;
   escuderia_id: string;
   foto_url?: string;
+  // Perfil Biográfico (Datos Estáticos)
+  numero?: number;
+  pais?: string;
+  bandera?: string;
+  edad?: number;
+  debut_anio?: number;
+  titulos_mundiales?: number;
+  victorias_totales?: number;
+  podios_totales?: number;
+}
+
+export interface DriverStats {
+  driverId: string;
+  // Campeonato
+  posicion_campeonato: number;
+  puntos_campeonato: number;
+  // Clasificación (Dato clave)
+  h2h_qualy: {
+    victorias: number;
+    derrotas: number;
+    companero: string;
+    companeroId: string;
+  };
+  veces_q1: number;
+  veces_q2: number;
+  veces_q3: number;
+  poles_anio: number;
+  // Carrera
+  victorias_anio: number;
+  dnfs_anio: number;
+  // Racha últimas 3 carreras
+  ultimas_carreras: {
+    gpNombre: string;
+    gpBandera: string;
+    posicion: number | "DNF";
+  }[];
 }
 
 export interface ResultadosOficiales {

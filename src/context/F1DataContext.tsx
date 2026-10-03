@@ -118,7 +118,13 @@ export const F1DataProvider: React.FC<{ children: React.ReactNode }> = ({
       ]);
 
       if (fetchedEscuderias.length > 0) setEscuderias(fetchedEscuderias);
-      if (fetchedPilotos.length > 0) setPilotos(fetchedPilotos);
+      if (fetchedPilotos.length > 0) {
+        const mergedPilotos = fetchedPilotos.map((p) => {
+          const staticData = getPilotoById(p.id);
+          return { ...staticData, ...p };
+        });
+        setPilotos(mergedPilotos);
+      }
       if (fetchedGP.length > 0) setRawGrandPrixList(fetchedGP);
     } catch (err) {
       console.warn("Usando datos iniciales de F1:", err);
