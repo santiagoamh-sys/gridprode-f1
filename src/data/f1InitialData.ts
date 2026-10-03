@@ -61,14 +61,14 @@ const createEmptyResultados = (isSprint: boolean): ResultadosOficiales => ({
     : {}),
 });
 
-// URLs oficiales de siluetas de circuitos (blancas, sin fondo) alojadas en el CDN de formula1.com
+// URLs oficiales de siluetas de circuitos (blancas, sin fondo, estilo contorno) alojadas en el CDN de formula1.com
 export const CIRCUIT_IMAGES: Record<string, string> = {
   "gp-australia-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Australia.png",
   "gp-azerbaiyan-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Azerbaijan.png",
   "gp-singapur-2026":
-    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Singapore.png",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Singapore%20carbon.png",
   "gp-usa-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/United%20States.png",
   "gp-mexico-2026":
@@ -76,7 +76,7 @@ export const CIRCUIT_IMAGES: Record<string, string> = {
   "gp-brasil-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Brazil.png",
   "gp-las-vegas-2026":
-    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Las%20Vegas.png",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Las%20Vegas%20carbon.png",
   "gp-catar-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Qatar.png",
   "gp-abu-dabi-2026":
@@ -87,8 +87,8 @@ export function getCircuitImageUrl(
   gp?: { id?: string; circuito_img_url?: string } | null
 ): string | undefined {
   if (!gp) return undefined;
-  if (gp.circuito_img_url) return gp.circuito_img_url;
   if (gp.id && CIRCUIT_IMAGES[gp.id]) return CIRCUIT_IMAGES[gp.id];
+  if (gp.circuito_img_url) return gp.circuito_img_url;
   return undefined;
 }
 

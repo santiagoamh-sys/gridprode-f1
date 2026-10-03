@@ -133,7 +133,7 @@ export async function getGrandPrixList(): Promise<GrandPrix[]> {
       snapshot.docs.forEach((d) => {
         const gp = d.data() as GrandPrix;
         const id = gp.id || d.id;
-        const circuito_img_url = gp.circuito_img_url || CIRCUIT_IMAGES[id];
+        const circuito_img_url = CIRCUIT_IMAGES[id] || gp.circuito_img_url;
         firestoreMap.set(id, {
           ...gp,
           id,
