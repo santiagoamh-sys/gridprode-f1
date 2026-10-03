@@ -6,6 +6,8 @@ import Link from "next/link";
 import { usePredictionWizard } from "@/context/PredictionWizardContext";
 import { useF1Data } from "@/context/F1DataContext";
 import { DriverGrid, DriverBadgeInfo } from "./DriverGrid";
+import { CircuitTrackSilhouette } from "./CircuitTrackSilhouette";
+import { getCircuitImageUrl } from "@/data/f1InitialData";
 import {
   X,
   ChevronLeft,
@@ -207,8 +209,13 @@ export const PredictionWizardModal: React.FC = () => {
               <h2 className="text-sm sm:text-base font-black text-white truncate">
                 {activeGp.nombre}
               </h2>
+              <CircuitTrackSilhouette
+                silueta={getCircuitImageUrl(activeGp)}
+                alt={activeGp.nombre}
+                size="sm"
+              />
               {activeGp.isSprint && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full">
+                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full shrink-0">
                   <Zap className="w-3 h-3 fill-amber-300" /> Sprint
                 </span>
               )}

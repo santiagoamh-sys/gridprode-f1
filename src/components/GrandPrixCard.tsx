@@ -5,6 +5,7 @@ import { GrandPrix } from "@/types/f1";
 import { usePredictionWizard } from "@/context/PredictionWizardContext";
 import { normalizeDriverList, normalizeDnfCount } from "@/lib/scoringEngine";
 import { getCircuitImageUrl } from "@/data/f1InitialData";
+import { CircuitTrackSilhouette } from "@/components/CircuitTrackSilhouette";
 import {
   Clock,
   Zap,
@@ -53,34 +54,20 @@ export const GrandPrixCard: React.FC<GrandPrixCardProps> = ({ gp }) => {
   return (
     <div className="rounded-2xl bg-[#1F1F27] border border-[#2D2D38] p-6 flex flex-col justify-between hover:border-[#E10600]/40 transition-all shadow-xl">
       <div>
-        {/* Encabezado de la Carrera */}
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-xl">{gp.bandera || "🏁"}</span>
-              <h3 className="font-black text-white text-base sm:text-lg leading-tight tracking-tight">
-                {gp.nombre}
-              </h3>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-xs text-[#8E8E93]">
-                {gp.ronda ? `Ronda ${gp.ronda} • ` : ""}
-                {gp.circuito || gp.pais}
-              </p>
-              {circuitImgUrl && (
-                <div
-                  className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-[#15151E] border border-[#2D2D38] hover:border-[#E10600]/40 transition-colors shadow-sm shrink-0"
-                  title={`Trazado oficial de ${gp.circuito || gp.nombre}`}
-                >
-                  <img
-                    src={circuitImgUrl}
-                    alt={`Trazado de ${gp.circuito || gp.nombre}`}
-                    className="h-5 w-8 sm:h-6 sm:w-10 object-contain filter brightness-110 drop-shadow contrast-125"
-                    loading="lazy"
-                  />
-                </div>
-              )}
-            </div>
+        {/* Encabezado de la Carrera con Silueta de Pista al lado del Nombre */}
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0 flex-1">
+            <CircuitTrackSilhouette
+              silueta={circuitImgUrl}
+              titulo={gp.nombre}
+              bandera={gp.bandera}
+              alt={`Silueta del circuito de ${gp.nombre}`}
+              size="md"
+            />
+            <p className="text-xs text-[#8E8E93] mt-1.5">
+              {gp.ronda ? `Ronda ${gp.ronda} • ` : ""}
+              {gp.circuito || gp.pais}
+            </p>
           </div>
 
           {/* Badges de Estado y Sprint */}

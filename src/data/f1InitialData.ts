@@ -61,26 +61,26 @@ const createEmptyResultados = (isSprint: boolean): ResultadosOficiales => ({
     : {}),
 });
 
-// URLs oficiales de trazados de circuitos alojados en el CDN de formula1.com
+// URLs oficiales de siluetas de circuitos (blancas, sin fondo) alojadas en el CDN de formula1.com
 export const CIRCUIT_IMAGES: Record<string, string> = {
   "gp-australia-2026":
-    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Australia_Circuit.webp",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Australia.png",
   "gp-azerbaiyan-2026":
-    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Baku_Circuit.webp",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Azerbaijan.png",
   "gp-singapur-2026":
-    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Singapore_Circuit.webp",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Singapore.png",
   "gp-usa-2026":
-    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/USA_Circuit.webp",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/United%20States.png",
   "gp-mexico-2026":
-    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Mexico_Circuit.webp",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Mexico.png",
   "gp-brasil-2026":
-    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Brazil_Circuit.webp",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Brazil.png",
   "gp-las-vegas-2026":
-    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Las_Vegas_Circuit.webp",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Las%20Vegas.png",
   "gp-catar-2026":
-    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Qatar_Circuit.webp",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Qatar.png",
   "gp-abu-dabi-2026":
-    "https://media.formula1.com/image/upload/c_fit,h_240/q_auto/v1740000001/content/dam/fom-website/2018-redesign-assets/Circuit%20maps%2016x9/Abu_Dhabi_Circuit.webp",
+    "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Abu%20Dhabi.png",
 };
 
 export function getCircuitImageUrl(
