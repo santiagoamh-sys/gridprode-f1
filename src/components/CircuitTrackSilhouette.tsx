@@ -49,18 +49,18 @@ export const CircuitTrackSilhouette: React.FC<CircuitTrackSilhouetteProps> = ({
 }) => {
   const silhouetteUrl = silueta || src;
 
-  // Tamaños calibrados para alta visibilidad y proporción estética
+  // Tamaños aumentados para que la pista destaque con mayor presencia manteniendo la proporción
   const sizeMap = {
-    sm: "h-8 w-12 max-w-[56px]",
-    md: "h-10 sm:h-12 w-14 sm:w-18 max-w-[76px]",
-    lg: "h-14 sm:h-16 w-20 sm:w-24 max-w-[96px]",
+    sm: "h-10 w-16 max-w-[64px]",
+    md: "h-14 sm:h-16 w-20 sm:w-24 max-w-[100px]",
+    lg: "h-18 sm:h-20 w-28 sm:w-32 max-w-[130px]",
   };
 
   const imageElement = silhouetteUrl ? (
     <img
       src={silhouetteUrl}
       alt={alt || (titulo ? `Silueta de pista de ${titulo}` : "Silueta de pista F1")}
-      className={`object-contain filter brightness-0 invert drop-shadow-[0_0_8px_rgba(255,255,255,0.4)] shrink-0 transition-transform duration-300 hover:scale-110 pointer-events-none select-none ${sizeMap[size]} ${className}`}
+      className={`object-contain filter brightness-0 invert shrink-0 transition-transform duration-300 hover:scale-105 pointer-events-none select-none ${sizeMap[size]} ${className}`}
       loading="lazy"
     />
   ) : null;
