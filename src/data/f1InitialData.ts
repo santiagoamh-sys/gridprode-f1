@@ -67,16 +67,14 @@ export const CIRCUIT_IMAGES: Record<string, string> = {
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Australia.png",
   "gp-azerbaiyan-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Azerbaijan.png",
-  "gp-singapur-2026":
-    "https://cdn.jsdelivr.net/gh/julesr0y/f1-circuits-svg@main/circuits/minimal/white/marina-bay-4.svg",
+  "gp-singapur-2026": "/circuits/singapore.svg",
   "gp-usa-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/United%20States.png",
   "gp-mexico-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Mexico.png",
   "gp-brasil-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Brazil.png",
-  "gp-las-vegas-2026":
-    "https://cdn.jsdelivr.net/gh/julesr0y/f1-circuits-svg@main/circuits/minimal/white/las-vegas-1.svg",
+  "gp-las-vegas-2026": "/circuits/las-vegas.svg",
   "gp-catar-2026":
     "https://media.formula1.com/image/upload/f_auto,q_auto/content/dam/fom-website/2018-redesign-assets/Track%20icons%204x3/Qatar.png",
   "gp-abu-dabi-2026":
