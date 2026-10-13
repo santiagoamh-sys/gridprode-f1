@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   Ticket,
   Medal,
+  Award,
   ShieldAlert,
 } from "lucide-react";
 
@@ -60,6 +61,11 @@ export const Navbar: React.FC = () => {
       href: "/ranking",
       label: "Ranking",
       icon: Medal,
+    },
+    {
+      href: "/premios",
+      label: "Premios",
+      icon: Award,
     },
     ...(isAdmin
       ? [

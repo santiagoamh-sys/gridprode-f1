@@ -17,6 +17,7 @@ import {
   ChevronUp,
   Ticket,
   Medal,
+  Award,
   ShieldAlert,
 } from "lucide-react";
 
@@ -47,8 +48,8 @@ function DashboardContent() {
       {/* 1. Tarjeta de Perfil del Usuario: Nombre, Puntaje Global, Favoritos */}
       <UserProfileCard />
 
-      {/* Accesos rápidos a Mis Pronósticos, Ranking y Admin */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* Accesos rápidos a Mis Pronósticos, Ranking, Premios y Admin */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Link
           href="/mis-pronosticos"
           className="rounded-2xl bg-[#1F1F27] border border-[#2D2D38] hover:border-[#E10600]/50 p-4 flex items-center gap-3.5 transition-all group shadow-lg"
@@ -59,7 +60,7 @@ function DashboardContent() {
           <div>
             <p className="text-sm font-black text-white">Mis Pronósticos</p>
             <p className="text-xs text-[#8E8E93]">
-              Revisa tus tickets guardados en Firestore
+              Revisa tus tickets guardados
             </p>
           </div>
         </Link>
@@ -74,7 +75,22 @@ function DashboardContent() {
           <div>
             <p className="text-sm font-black text-white">Leaderboard Global</p>
             <p className="text-xs text-[#8E8E93]">
-              Tabla de posiciones y desglose por GP
+              Tabla y desglose por GP
+            </p>
+          </div>
+        </Link>
+
+        <Link
+          href="/premios"
+          className="rounded-2xl bg-[#1F1F27] border border-[#2D2D38] hover:border-[#ffd700]/50 p-4 flex items-center gap-3.5 transition-all group shadow-lg"
+        >
+          <div className="w-10 h-10 rounded-xl bg-[#ffd700]/15 border border-[#ffd700]/30 flex items-center justify-center text-[#ffd700] group-hover:bg-[#ffd700] group-hover:text-black transition-colors">
+            <Award className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-sm font-black text-white">Vitrina de Trofeos</p>
+            <p className="text-xs text-[#8E8E93]">
+              Insignias y logros progresivos
             </p>
           </div>
         </Link>
@@ -92,7 +108,7 @@ function DashboardContent() {
                 Panel Administrador
               </p>
               <p className="text-xs text-[#8E8E93]">
-                Cargar Resultados Oficiales y calcular puntos
+                Cargar resultados y puntos
               </p>
             </div>
           </Link>
@@ -103,10 +119,10 @@ function DashboardContent() {
             </div>
             <div>
               <p className="text-sm font-black text-white">
-                Inicio en GP de Singapur
+                Temporada F1 2026
               </p>
               <p className="text-xs text-[#8E8E93]">
-                Calendario filtrado con fecha del sistema
+                Calendario oficial activo
               </p>
             </div>
           </div>

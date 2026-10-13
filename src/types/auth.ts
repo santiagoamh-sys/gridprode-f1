@@ -10,6 +10,7 @@ export interface UserProfile {
   puntaje_global: number;
   piloto_favorito_id: string | null;
   escuderia_favorita_id: string | null;
+  badges_progress?: Record<string, number>;
   createdAt?: any;
   lastLoginAt?: any;
 }

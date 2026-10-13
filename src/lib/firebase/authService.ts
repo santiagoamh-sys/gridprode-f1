@@ -65,6 +65,7 @@ export async function syncUserProfile(user: User): Promise<UserProfile> {
       puntaje_global: 0,
       piloto_favorito_id: null,
       escuderia_favorita_id: null,
+      badges_progress: {},
     };
   }
 
@@ -97,6 +98,7 @@ export async function syncUserProfile(user: User): Promise<UserProfile> {
       puntaje_global: data.puntaje_global ?? 0,
       piloto_favorito_id: data.piloto_favorito_id ?? null,
       escuderia_favorita_id: data.escuderia_favorita_id ?? null,
+      badges_progress: data.badges_progress ?? {},
     };
   } else {
     // Nuevo usuario: asignar rol 'Administrador' si está en la lista admin, o 'Participante' por defecto
@@ -114,6 +116,7 @@ export async function syncUserProfile(user: User): Promise<UserProfile> {
       puntaje_global: 0,
       piloto_favorito_id: null,
       escuderia_favorita_id: null,
+      badges_progress: {},
       createdAt: serverTimestamp(),
       lastLoginAt: serverTimestamp(),
     };
