@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Navbar, isEmailInInitialAdmins } from "@/components/Navbar";
@@ -9,6 +9,12 @@ import { useAuth } from "@/context/AuthContext";
 import { useF1Data } from "@/context/F1DataContext";
 import { GrandPrix, ResultadosOficiales } from "@/types/f1";
 import { guardarResultadosYCalcularPuntajes } from "@/lib/firebase/f1Service";
+import {
+  processRaceBadgesBatch,
+  ProcessBadgesResult,
+} from "@/lib/firebase/badgeService";
+import { OfficialRaceResults } from "@/utils/badgeEvaluator";
+import { BADGES_DATA } from "@/data/badgesData";
 import {
   fetchOfficialResultsFromF1Api,
   F1ApiSyncedResults,
@@ -28,6 +34,17 @@ import {
   ArrowLeft,
   AlertCircle,
   Edit3,
+  Trophy,
+  Award,
+  Sparkles,
+  Flame,
+  Users,
+  Flag,
+  Car,
+  Check,
+  X,
+  Layers,
+  Calendar,
 } from "lucide-react";
 
 export default function AdminPage() {
@@ -81,6 +98,16 @@ function AdminGuardAndContent() {
   return <AdminPanelContent onScoresUpdated={refreshProfile} />;
 }
 
+type AdminTab = "badges" | "scoring" | "seed";
+
+interface ToastState {
+  show: boolean;
+  type: "success" | "error" | "info";
+  title: string;
+  message: string;
+  badgeCount?: number;
+}
+
 function AdminPanelContent({
   onScoresUpdated,
 }: {
@@ -94,6 +121,26 @@ function AdminPanelContent({
     refreshData,
   } = useF1Data();
 
+  const [activeTab, setActiveTab] = useState<AdminTab>("badges");
+
+  // Estado del Toast flotante
+  const [toast, setToast] = useState<ToastState>({
+    show: false,
+    type: "success",
+    title: "",
+    message: "",
+  });
+
+  // Temporizador para auto-ocultar el toast
+  useEffect(() => {
+    if (!toast.show) return;
+    const timer = setTimeout(() => {
+      setToast((prev) => ({ ...prev, show: false }));
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [toast.show]);
+
+  // Selección de Gran Premio
   const [selectedGpId, setSelectedGpId] = useState<string>(
     grandPrixList[0]?.id || "gp-singapur-2026"
   );
@@ -101,7 +148,165 @@ function AdminPanelContent({
   const selectedGp: GrandPrix | undefined =
     grandPrixList.find((g) => g.id === selectedGpId) || grandPrixList[0];
 
-  // Estados del formulario de Resultados Oficiales (6 casilleros Q1, 6 Q2, 10 Q3)
+  // =========================================================================
+  // ESTADOS PARA FORMULARIO DE EVALUACIÓN DE INSIGNIAS (FASE 2)
+  // =========================================================================
+  const [badgeP1, setBadgeP1] = useState<string>("");
+  const [badgeP2, setBadgeP2] = useState<string>("");
+  const [badgeP3, setBadgeP3] = useState<string>("");
+  const [badgePole, setBadgePole] = useState<string>("");
+  const [badgeDotd, setBadgeDotd] = useState<string>("");
+  const [badgeEscuderia, setBadgeEscuderia] = useState<string>("");
+  const [badgeDnfCount, setBadgeDnfCount] = useState<number>(2);
+  const [badgeDnfDrivers, setBadgeDnfDrivers] = useState<string[]>([]);
+  const [badgeColapinto, setBadgeColapinto] = useState<number>(10);
+  const [badgeIsSprint, setBadgeIsSprint] = useState<boolean>(false);
+  const [badgeSprintPole, setBadgeSprintPole] = useState<string>("");
+  const [badgeSprintP1, setBadgeSprintP1] = useState<string>("");
+  const [badgeSprintP2, setBadgeSprintP2] = useState<string>("");
+  const [badgeSprintP3, setBadgeSprintP3] = useState<string>("");
+
+  const [processingBadges, setProcessingBadges] = useState(false);
+  const [badgeErrorMsg, setBadgeErrorMsg] = useState<string | null>(null);
+  const [badgeProcessResult, setBadgeProcessResult] =
+    useState<ProcessBadgesResult | null>(null);
+
+  // Sincronizar campos de insignias cuando cambia el GP seleccionado
+  useEffect(() => {
+    if (!selectedGp) return;
+    const res = selectedGp.resultados_oficiales;
+    setBadgeP1(res.p1 || "");
+    setBadgeP2(res.p2 || "");
+    setBadgeP3(res.p3 || "");
+
+    // Pole desde pole o q3[0]
+    let poleVal = res.pole || "";
+    if (!poleVal && res.q3) {
+      const q3Drivers = normalizeDriverList(res.q3);
+      if (q3Drivers.length > 0) poleVal = q3Drivers[0];
+    }
+    setBadgePole(poleVal);
+
+    setBadgeDotd(res.piloto_del_dia || "");
+    setBadgeEscuderia(res.escuderia || "");
+    setBadgeDnfCount(normalizeDnfCount(res.dnf) ?? 2);
+
+    const dnfList = normalizeDriverList(
+      res.dnf_drivers || (Array.isArray(res.dnf) ? res.dnf : [])
+    );
+    setBadgeDnfDrivers(dnfList);
+
+    setBadgeColapinto(
+      res.posicion_colapinto !== null && res.posicion_colapinto !== undefined
+        ? Number(res.posicion_colapinto)
+        : 10
+    );
+
+    setBadgeIsSprint(Boolean(selectedGp.isSprint));
+    setBadgeSprintPole(res.sprintPole || "");
+    setBadgeSprintP1(res.sprintP1 || "");
+    setBadgeSprintP2(res.sprintP2 || "");
+    setBadgeSprintP3(res.sprintP3 || "");
+    setBadgeErrorMsg(null);
+  }, [selectedGpId, selectedGp]);
+
+  // Manejo de alternancia en lista de pilotos DNF
+  const toggleDnfDriver = (driverId: string) => {
+    setBadgeDnfDrivers((prev) => {
+      const exists = prev.includes(driverId);
+      const next = exists
+        ? prev.filter((id) => id !== driverId)
+        : [...prev, driverId];
+      // Si la cantidad de DNFs coincide con la lista, sugerimos el nuevo largo
+      setBadgeDnfCount(next.length);
+      return next;
+    });
+  };
+
+  // Procesar Evaluación de Insignias y Otorgar Premios en Lote (Firebase Batch)
+  const handleProcessBadges = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedGp) return;
+
+    if (!badgeP1 || !badgeP2 || !badgeP3) {
+      setBadgeErrorMsg("Debes especificar el podio completo de la carrera (P1, P2 y P3).");
+      return;
+    }
+    if (new Set([badgeP1, badgeP2, badgeP3]).size !== 3) {
+      setBadgeErrorMsg("Los 3 pilotos del podio deben ser distintos.");
+      return;
+    }
+    if (!badgePole) {
+      setBadgeErrorMsg("Debes seleccionar al piloto ganador de la Pole Position.");
+      return;
+    }
+    if (!badgeDotd) {
+      setBadgeErrorMsg("Debes seleccionar al Piloto del Día (Driver of the Day).");
+      return;
+    }
+    if (!badgeEscuderia) {
+      setBadgeErrorMsg("Debes seleccionar la Escudería Ganadora.");
+      return;
+    }
+
+    try {
+      setProcessingBadges(true);
+      setBadgeErrorMsg(null);
+      setBadgeProcessResult(null);
+
+      const officialPayload: OfficialRaceResults = {
+        p1: badgeP1,
+        p2: badgeP2,
+        p3: badgeP3,
+        pole: badgePole,
+        piloto_del_dia: badgeDotd,
+        escuderia: badgeEscuderia,
+        dnf: badgeDnfCount,
+        dnfDrivers: badgeDnfDrivers,
+        dnf_drivers: badgeDnfDrivers,
+        posicion_colapinto: badgeColapinto,
+        isSprint: badgeIsSprint,
+        ...(badgeIsSprint
+          ? {
+              sprintPole: badgeSprintPole,
+              sprintP1: badgeSprintP1,
+              sprintP2: badgeSprintP2,
+              sprintP3: badgeSprintP3,
+            }
+          : {}),
+      };
+
+      const result = await processRaceBadgesBatch(selectedGp.id, officialPayload);
+      setBadgeProcessResult(result);
+      await refreshData();
+      await onScoresUpdated();
+
+      // Disparar Toast de Éxito
+      setToast({
+        show: true,
+        type: "success",
+        title: "¡Insignias Procesadas y Otorgadas con Éxito!",
+        message: `Se evaluaron ${result.totalPredictions} pronósticos y se actualizaron ${result.updatedUsersCount} perfiles de usuarios en Firestore.`,
+      });
+    } catch (err: any) {
+      console.error("Error al procesar insignias:", err);
+      setBadgeErrorMsg(
+        err.message || "Error al procesar el lote de insignias en Firestore."
+      );
+      setToast({
+        show: true,
+        type: "error",
+        title: "Error al procesar insignias",
+        message: err.message || "Ocurrió un error al procesar el lote.",
+      });
+    } finally {
+      setProcessingBadges(false);
+    }
+  };
+
+  // =========================================================================
+  // ESTADOS DEL FORMULARIO DE CÁLCULO GENERAL DE PUNTAJES (Q1, Q2, Q3)
+  // =========================================================================
   const [q1Slots, setQ1Slots] = useState<string[]>(Array(6).fill(""));
   const [q2Slots, setQ2Slots] = useState<string[]>(Array(6).fill(""));
   const [q3Slots, setQ3Slots] = useState<string[]>(Array(10).fill(""));
@@ -117,7 +322,6 @@ function AdminPanelContent({
   const [sprintP2, setSprintP2] = useState<string>("");
   const [sprintP3, setSprintP3] = useState<string>("");
 
-  // Estados de sincronización con API y procesamiento de puntajes
   const [syncingApi, setSyncingApi] = useState(false);
   const [apiPreviewMeta, setApiPreviewMeta] =
     useState<F1ApiSyncedResults | null>(null);
@@ -133,7 +337,7 @@ function AdminPanelContent({
     }>;
   } | null>(null);
 
-  // Sincronizar campos con los datos guardados en Firestore al cambiar de GP
+  // Sincronizar formulario general cuando cambia de GP
   useEffect(() => {
     if (!selectedGp) return;
     const res = selectedGp.resultados_oficiales;
@@ -168,12 +372,10 @@ function AdminPanelContent({
     setErrorMsg(null);
   }, [selectedGpId, selectedGp]);
 
-  // Listas limpias de Q1, Q2 y Q3
   const q1Eliminated = q1Slots.filter(Boolean);
   const q2Eliminated = q2Slots.filter(Boolean);
   const q3Selected = q3Slots.filter(Boolean);
 
-  // Exclusión en cascada al cambiar un select o tarjeta de Q1
   const handleQ1SlotChange = (slotIdx: number, driverId: string) => {
     setQ1Slots((prev) => {
       const next = [...prev];
@@ -206,7 +408,6 @@ function AdminPanelContent({
     }
   };
 
-  // Exclusión en cascada al cambiar un select o tarjeta de Q2
   const handleQ2SlotChange = (slotIdx: number, driverId: string) => {
     if (driverId && q1Eliminated.includes(driverId)) return;
     setQ2Slots((prev) => {
@@ -238,7 +439,6 @@ function AdminPanelContent({
     }
   };
 
-  // Cambio de casillero en Q3 (1 al 10)
   const handleQ3SlotChange = (posIndex: number, driverId: string) => {
     if (
       driverId &&
@@ -265,9 +465,6 @@ function AdminPanelContent({
     (p) => !q1Eliminated.includes(p.id) && !q2Eliminated.includes(p.id)
   );
 
-  // =========================================================================
-  // SINCRONIZACIÓN SEMI-AUTOMÁTICA CON API PÚBLICA DE F1 (PRE-VISUALIZACIÓN)
-  // =========================================================================
   const handleSyncFromF1Api = async () => {
     if (!selectedGp) return;
     try {
@@ -277,7 +474,6 @@ function AdminPanelContent({
 
       const synced = await fetchOfficialResultsFromF1Api(selectedGp);
 
-      // Inyectar los resultados en el estado visual del formulario SIN guardar en Firestore
       setQ1Slots(
         Array(6)
           .fill("")
@@ -320,9 +516,6 @@ function AdminPanelContent({
     }
   };
 
-  // =========================================================================
-  // GUARDADO FINAL EN FIRESTORE Y CÁLCULO DE PUNTAJES (TRAS REVISIÓN MANUAL)
-  // =========================================================================
   const handleSaveAndCalculate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedGp) return;
@@ -350,19 +543,6 @@ function AdminPanelContent({
     if (!escuderiaGanadora || !pilotoDelDia) {
       setErrorMsg(
         "Por favor verifica y selecciona la Escudería Ganadora y el Piloto del Día (DOTD)."
-      );
-      return;
-    }
-    if (
-      selectedGp.isSprint &&
-      (!sprintPole ||
-        !sprintP1 ||
-        !sprintP2 ||
-        !sprintP3 ||
-        new Set([sprintP1, sprintP2, sprintP3]).size !== 3)
-    ) {
-      setErrorMsg(
-        "Para un GP con formato Sprint, debes completar Sprint Pole y un Podio Sprint (P1, P2, P3) con 3 pilotos distintos."
       );
       return;
     }
@@ -401,6 +581,13 @@ function AdminPanelContent({
       setApiPreviewMeta(null);
       await refreshData();
       await onScoresUpdated();
+
+      setToast({
+        show: true,
+        type: "success",
+        title: "¡Puntajes Calculados con Éxito!",
+        message: `Se evaluaron ${res.prediccionesEvaluadas} pronósticos y se actualizaron ${res.usuariosActualizados} usuarios en el Ranking.`,
+      });
     } catch (err: any) {
       console.error("Error al guardar resultados y calcular puntajes:", err);
       setErrorMsg(
@@ -411,656 +598,817 @@ function AdminPanelContent({
     }
   };
 
+  // Mapa de nombres de insignias para el resumen visual
+  const badgeNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    BADGES_DATA.forEach((b) => {
+      map.set(b.id, b.nombre);
+    });
+    return map;
+  }, []);
+
   return (
-    <div className="space-y-8">
-      {/* Encabezado Admin */}
+    <div className="space-y-8 relative">
+      {/* ================================================================= */}
+      {/* TOAST FLOTANTE GLASSMORPHISM                                      */}
+      {/* ================================================================= */}
+      {toast.show && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md w-full animate-in slide-in-from-bottom-5 fade-in duration-300">
+          <div className="rounded-2xl bg-[#1F1F27]/95 backdrop-blur-xl border border-emerald-500/50 p-4 shadow-[0_15px_40px_rgba(0,0,0,0.8)] text-white flex items-start gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0 mt-0.5">
+              <Trophy className="w-5 h-5" />
+            </div>
+            <div className="flex-1 pr-1">
+              <h4 className="text-sm font-black text-emerald-300 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-emerald-400" />
+                {toast.title}
+              </h4>
+              <p className="text-xs text-[#D0D0D2] mt-1 leading-relaxed">
+                {toast.message}
+              </p>
+            </div>
+            <button
+              onClick={() => setToast((prev) => ({ ...prev, show: false }))}
+              className="text-[#8E8E93] hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Encabezado General del Panel */}
       <div className="rounded-2xl bg-[#1F1F27] border border-[#2D2D38] p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
         <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-[#E10600]/15 border border-[#E10600]/30 flex items-center justify-center text-[#E10600] shrink-0">
-            <ShieldAlert className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-2xl bg-[#E10600]/15 border border-[#E10600]/30 flex items-center justify-center text-[#E10600] shrink-0">
+            <ShieldAlert className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                Panel de Administración • Carga Semi-Automática
+                Panel de Administración • GridProde F1
               </h1>
               <span className="text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-md">
-                Autorizado
+                Admin Activo
               </span>
             </div>
             <p className="text-xs text-[#8E8E93] mt-0.5">
-              Sincroniza resultados desde la API oficial de F1 (Jolpi/Ergast),
-              revisa o edita manualmente y ejecuta el Motor de Puntajes.
+              Fase 2: Motor de Evaluación de Insignias y Premios • Cálculo de Puntajes Oficiales
             </p>
           </div>
+        </div>
+
+        {/* Selector de Gran Premio Global */}
+        <div className="w-full sm:w-auto">
+          <label className="block text-[10px] font-black uppercase tracking-wider text-[#E10600] mb-1">
+            Gran Premio a Administrar
+          </label>
+          <select
+            value={selectedGpId}
+            onChange={(e) => setSelectedGpId(e.target.value)}
+            className="w-full sm:w-80 bg-[#15151E] border border-[#2D2D38] rounded-xl px-3.5 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
+          >
+            {grandPrixList.map((gp) => (
+              <option key={gp.id} value={gp.id}>
+                {gp.bandera} {gp.nombre} ({gp.estado.toUpperCase()})
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
-      {/* Herramienta de Seed de Colecciones Maestras */}
-      <AdminSeedCard />
+      {/* Selector de Pestañas (Tabs) */}
+      <div className="flex items-center gap-2 border-b border-[#2D2D38] pb-1 overflow-x-auto">
+        <button
+          onClick={() => setActiveTab("badges")}
+          className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
+            activeTab === "badges"
+              ? "bg-[#E10600] text-white shadow-[0_0_20px_rgba(225,6,0,0.4)]"
+              : "text-[#8E8E93] hover:text-white hover:bg-[#1F1F27]"
+          }`}
+        >
+          <Trophy className="w-4 h-4" />
+          <span>Motor de Insignias y Premios (Fase 2)</span>
+        </button>
 
-      {/* Formulario de Carga de Resultados Oficiales y Cálculo */}
-      <form
-        onSubmit={handleSaveAndCalculate}
-        className="rounded-2xl bg-[#1F1F27] border border-[#2D2D38] p-6 sm:p-8 space-y-8 shadow-2xl"
-      >
-        {/* Barra Superior: Selector de Gran Premio + Botón Primario "Autocompletar Resultados Oficiales" */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-[#2D2D38]">
-          <div className="flex-1">
-            <label className="block text-xs font-black uppercase tracking-wider text-[#E10600] mb-1.5">
-              Gran Premio Seleccionado (Desde GP de Singapur)
-            </label>
-            <select
-              value={selectedGpId}
-              onChange={(e) => setSelectedGpId(e.target.value)}
-              className="w-full max-w-md bg-[#15151E] border border-[#2D2D38] rounded-xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-[#E10600]"
-            >
-              {grandPrixList.map((gp) => (
-                <option key={gp.id} value={gp.id}>
-                  {gp.bandera} {gp.nombre} ({gp.estado.toUpperCase()})
-                </option>
-              ))}
-            </select>
-          </div>
+        <button
+          onClick={() => setActiveTab("scoring")}
+          className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
+            activeTab === "scoring"
+              ? "bg-[#E10600] text-white shadow-[0_0_20px_rgba(225,6,0,0.4)]"
+              : "text-[#8E8E93] hover:text-white hover:bg-[#1F1F27]"
+          }`}
+        >
+          <Calculator className="w-4 h-4" />
+          <span>Cálculo de Puntajes Q1/Q2/Q3</span>
+        </button>
 
-          {/* Botón Primario de Sincronización con API */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={handleSyncFromF1Api}
-              disabled={syncingApi || processing}
-              className="inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider bg-[#E10600] hover:bg-[#b80500] text-white shadow-[0_0_25px_rgba(225,6,0,0.45)] disabled:opacity-50 transition-all"
-            >
-              {syncingApi ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <CloudDownload className="w-4 h-4" />
-              )}
-              <span>
-                {syncingApi
-                  ? "Consultando API F1..."
-                  : "Autocompletar Resultados Oficiales"}
-              </span>
-            </button>
-          </div>
-        </div>
+        <button
+          onClick={() => setActiveTab("seed")}
+          className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
+            activeTab === "seed"
+              ? "bg-[#E10600] text-white shadow-[0_0_20px_rgba(225,6,0,0.4)]"
+              : "text-[#8E8E93] hover:text-white hover:bg-[#1F1F27]"
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          <span>Gestión de Base de Datos (Seed)</span>
+        </button>
+      </div>
 
-        {/* Banner de Pre-visualización tras autocompletar desde la API */}
-        {apiPreviewMeta && (
-          <div className="rounded-2xl bg-amber-500/10 border border-amber-500/40 p-5 space-y-2 animate-in fade-in duration-200">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-amber-300 font-black text-xs sm:text-sm uppercase tracking-wider">
-                <Edit3 className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>
-                  Pre-visualización cargada desde API • Edición Manual Habilitada
+      {/* ================================================================= */}
+      {/* PESTAÑA 1: MOTOR DE EVALUACIÓN DE INSIGNIAS (FASE 2)              */}
+      {/* ================================================================= */}
+      {activeTab === "badges" && (
+        <div className="space-y-8 animate-in fade-in duration-200">
+          <form
+            onSubmit={handleProcessBadges}
+            className="rounded-2xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-6 sm:p-8 space-y-8 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]"
+          >
+            {/* Cabecera del formulario de Insignias */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-[#2D2D38]">
+              <div>
+                <div className="flex items-center gap-2 text-amber-400 font-black text-sm uppercase tracking-wider">
+                  <Award className="w-5 h-5 text-amber-400" />
+                  <span>Carga de Resultados Oficiales para Insignias</span>
+                </div>
+                <p className="text-xs text-[#8E8E93] mt-1">
+                  Ingresa los resultados oficiales para evaluar las 15 insignias del juego.
+                  Al procesar, se recuperarán todos los pronósticos de{" "}
+                  <strong className="text-white">{selectedGp?.nombre}</strong>, se calculará el progreso acumulado y se actualizarán en lote (batch) en Firestore.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-[#8E8E93] bg-[#15151E] border border-[#2D2D38] px-3 py-1.5 rounded-xl">
+                  {selectedGp?.bandera} {selectedGp?.nombre}
                 </span>
               </div>
-              <span className="text-[11px] font-mono text-amber-200 bg-[#15151E] border border-amber-500/30 px-2.5 py-0.5 rounded-md">
-                Sesión: {apiPreviewMeta.sessionRaceName}{" "}
-                {apiPreviewMeta.sessionDate
-                  ? `(${apiPreviewMeta.sessionDate})`
-                  : ""}
-              </span>
             </div>
-            <p className="text-xs text-[#D0D0D2] leading-relaxed">
-              Los campos de <strong>Q1 (6)</strong>, <strong>Q2 (6)</strong>,{" "}
-              <strong>Top 10 Q3</strong>, <strong>Podio de Carrera</strong>,{" "}
-              {selectedGp?.isSprint && <strong>Podio Sprint, </strong>}y{" "}
-              <strong>Total de Abandonos ({apiPreviewMeta.dnfCount} DNF)</strong>{" "}
-              han sido inyectados en los selectores del formulario.{" "}
-              <strong className="text-white">
-                Los datos aún NO se han guardado en Firestore ni se han
-                calculado los puntajes.
-              </strong>{" "}
-              Verifica o corrige manualmente campos específicos como el{" "}
-              <strong className="text-amber-300">Piloto del Día (DOTD)</strong> y
-              la{" "}
-              <strong className="text-amber-300">
-                Posición de Franco Colapinto
-              </strong>{" "}
-              antes de presionar <em>&ldquo;Guardar y Calcular Puntajes&rdquo;</em>.
-            </p>
-          </div>
-        )}
 
-        {/* =============================================================== */}
-        {/* 1. ELIMINADOS Q1 (6 selects + selector rápido de tarjetas)      */}
-        {/* =============================================================== */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                1. Eliminados Oficiales en Q1 (Posiciones 17 a 22 • 1 pt c/u)
+            {/* SECCIÓN 1: PODIO OFICIAL Y POLE POSITION */}
+            <div className="space-y-4">
+              <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                <Trophy className="w-4 h-4 text-amber-400" />
+                <span>1. Podio Oficial y Pole Position</span>
               </h3>
-              <p className="text-xs text-[#8E8E93]">
-                Revisa o modifica los 6 pilotos eliminados en Q1 mediante los
-                selectores o haciendo clic en las tarjetas.
-              </p>
-            </div>
-            <span
-              className={`font-mono text-sm font-black px-3 py-1 rounded-lg border ${
-                q1Eliminated.length === 6
-                  ? "bg-emerald-950/50 border-emerald-500/40 text-emerald-400"
-                  : "bg-[#15151E] border-[#2D2D38] text-[#E10600]"
-              }`}
-            >
-              {q1Eliminated.length} / 6
-            </span>
-          </div>
 
-          {/* 6 Selects de Q1 sincronizados con la API */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
-            {q1Slots.map((driverId, idx) => (
-              <div
-                key={idx}
-                className="bg-[#15151E] border border-[#2D2D38] rounded-xl p-2.5 space-y-1"
-              >
-                <label className="block text-[10px] font-black uppercase text-[#8E8E93]">
-                  Eliminado Q1 #{idx + 1} (P{17 + idx})
-                </label>
-                <select
-                  value={driverId}
-                  onChange={(e) => handleQ1SlotChange(idx, e.target.value)}
-                  className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
-                >
-                  <option value="">Seleccionar piloto...</option>
-                  {pilotos.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre} ({p.id})
-                    </option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* P1 */}
+                <div className="bg-[#15151E]/80 border border-[#2D2D38] rounded-xl p-3.5 space-y-1.5 focus-within:border-amber-400 transition-colors">
+                  <label className="block text-xs font-black uppercase text-amber-400">
+                    🥇 P1 • Ganador de Carrera
+                  </label>
+                  <select
+                    value={badgeP1}
+                    onChange={(e) => setBadgeP1(e.target.value)}
+                    className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-amber-400"
+                  >
+                    <option value="">Seleccionar ganador...</option>
+                    {pilotos.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre} ({p.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* P2 */}
+                <div className="bg-[#15151E]/80 border border-[#2D2D38] rounded-xl p-3.5 space-y-1.5 focus-within:border-zinc-300 transition-colors">
+                  <label className="block text-xs font-black uppercase text-zinc-300">
+                    🥈 P2 • Segundo Puesto
+                  </label>
+                  <select
+                    value={badgeP2}
+                    onChange={(e) => setBadgeP2(e.target.value)}
+                    className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-zinc-300"
+                  >
+                    <option value="">Seleccionar P2...</option>
+                    {pilotos.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre} ({p.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* P3 */}
+                <div className="bg-[#15151E]/80 border border-[#2D2D38] rounded-xl p-3.5 space-y-1.5 focus-within:border-amber-600 transition-colors">
+                  <label className="block text-xs font-black uppercase text-amber-600">
+                    🥉 P3 • Tercer Puesto
+                  </label>
+                  <select
+                    value={badgeP3}
+                    onChange={(e) => setBadgeP3(e.target.value)}
+                    className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-amber-600"
+                  >
+                    <option value="">Seleccionar P3...</option>
+                    {pilotos.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre} ({p.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Pole Position */}
+                <div className="bg-[#15151E]/80 border border-[#2D2D38] rounded-xl p-3.5 space-y-1.5 focus-within:border-purple-400 transition-colors">
+                  <label className="block text-xs font-black uppercase text-purple-400 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>⚡ Pole Position</span>
+                  </label>
+                  <select
+                    value={badgePole}
+                    onChange={(e) => setBadgePole(e.target.value)}
+                    className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-purple-400"
+                  >
+                    <option value="">Seleccionar Poleman...</option>
+                    {pilotos.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre} ({p.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            ))}
-          </div>
+            </div>
 
-          {/* Grilla rápida de botones de Q1 */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2">
-            {pilotos.map((p) => {
-              const selected = q1Eliminated.includes(p.id);
-              const esc = getEscuderia(p.escuderia_id);
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => toggleAdminQ1Card(p.id)}
-                  style={{
-                    borderColor: selected
-                      ? "#E10600"
-                      : esc?.color_hex || "#2D2D38",
-                  }}
-                  className={`px-3 py-2 rounded-xl border-2 text-left transition-all ${
-                    selected
-                      ? "bg-[#E10600]/20 text-white ring-2 ring-[#E10600]/50"
-                      : "bg-[#15151E] text-[#D0D0D2] hover:text-white"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10px] font-black text-[#8E8E93]">
-                      {p.id}
-                    </span>
-                    {selected && (
-                      <span className="text-[9px] font-black text-[#E10600]">
-                        OUT Q1
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs font-bold truncate mt-0.5">
-                    {p.nombre}
+            {/* SECCIÓN 2: ESPECIALES Y COMUNIDAD */}
+            <div className="space-y-4 pt-4 border-t border-[#2D2D38]">
+              <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                <Users className="w-4 h-4 text-emerald-400" />
+                <span>2. Especiales de Carrera y Comunidad</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Piloto del Día */}
+                <div className="bg-[#15151E]/80 border border-[#2D2D38] rounded-xl p-3.5 space-y-1.5">
+                  <label className="block text-xs font-black uppercase text-amber-300 flex items-center gap-1">
+                    <Award className="w-3.5 h-3.5" />
+                    <span>Piloto del Día (Driver of the Day)</span>
+                  </label>
+                  <select
+                    value={badgeDotd}
+                    onChange={(e) => setBadgeDotd(e.target.value)}
+                    className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-amber-400"
+                  >
+                    <option value="">Seleccionar Piloto del Día...</option>
+                    {pilotos.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre} ({p.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Escudería Ganadora */}
+                <div className="bg-[#15151E]/80 border border-[#2D2D38] rounded-xl p-3.5 space-y-1.5">
+                  <label className="block text-xs font-black uppercase text-[#D0D0D2] flex items-center gap-1">
+                    <Car className="w-3.5 h-3.5 text-[#E10600]" />
+                    <span>Escudería Ganadora (Constructor)</span>
+                  </label>
+                  <select
+                    value={badgeEscuderia}
+                    onChange={(e) => setBadgeEscuderia(e.target.value)}
+                    className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
+                  >
+                    <option value="">Seleccionar Escudería...</option>
+                    {escuderias.map((esc) => (
+                      <option key={esc.id} value={esc.id}>
+                        {esc.nombre} ({esc.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Posición Franco Colapinto */}
+                <div className="bg-[#15151E]/80 border border-[#2D2D38] rounded-xl p-3.5 space-y-1.5">
+                  <label className="block text-xs font-black uppercase text-sky-400 flex items-center gap-1">
+                    <Flag className="w-3.5 h-3.5 text-sky-400" />
+                    <span>🇦🇷 Posición Franco Colapinto</span>
+                  </label>
+                  <select
+                    value={badgeColapinto}
+                    onChange={(e) => setBadgeColapinto(Number(e.target.value))}
+                    className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-sky-400"
+                  >
+                    <option value={0}>DNF (Abandono / Retiro)</option>
+                    {Array.from({ length: 22 }).map((_, idx) => (
+                      <option key={idx + 1} value={idx + 1}>
+                        P{idx + 1} (Posición #{idx + 1})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* SECCIÓN 3: ABANDONOS (DNFs) Y LISTA DE PILOTOS */}
+            <div className="space-y-4 pt-4 border-t border-[#2D2D38]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <Flame className="w-4 h-4 text-orange-400" />
+                    <span>3. Cantidad y Lista de Abandonos (DNFs)</span>
+                  </h3>
+                  <p className="text-[11px] text-[#8E8E93] mt-0.5">
+                    Selecciona los pilotos que abandonaron (necesario para la insignia <em>&quot;El Mufa&quot;</em> y la cantidad para <em>&quot;Oráculo del Caos&quot;</em> / <em>&quot;Carrera Limpia&quot;</em>).
                   </p>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+                </div>
 
-        {/* =============================================================== */}
-        {/* 2. ELIMINADOS Q2 (6 selects + selector rápido, excluye Q1)      */}
-        {/* =============================================================== */}
-        <div className="space-y-4 pt-4 border-t border-[#2D2D38]">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                2. Eliminados Oficiales en Q2 (Posiciones 11 a 16 • 1 pt c/u)
-              </h3>
-              <p className="text-xs text-[#8E8E93]">
-                Los 6 eliminados en Q1 están excluidos automáticamente. Revisa o
-                edita los 6 eliminados de Q2.
-              </p>
-            </div>
-            <span
-              className={`font-mono text-sm font-black px-3 py-1 rounded-lg border ${
-                q2Eliminated.length === 6
-                  ? "bg-emerald-950/50 border-emerald-500/40 text-emerald-400"
-                  : "bg-[#15151E] border-[#2D2D38] text-[#E10600]"
-              }`}
-            >
-              {q2Eliminated.length} / 6
-            </span>
-          </div>
-
-          {/* 6 Selects de Q2 sincronizados con la API */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
-            {q2Slots.map((driverId, idx) => (
-              <div
-                key={idx}
-                className="bg-[#15151E] border border-[#2D2D38] rounded-xl p-2.5 space-y-1"
-              >
-                <label className="block text-[10px] font-black uppercase text-[#8E8E93]">
-                  Eliminado Q2 #{idx + 1} (P{11 + idx})
-                </label>
-                <select
-                  value={driverId}
-                  onChange={(e) => handleQ2SlotChange(idx, e.target.value)}
-                  className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
-                >
-                  <option value="">Seleccionar piloto...</option>
-                  {q2AvailableDrivers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre} ({p.id})
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-bold text-[#8E8E93]">
+                    Total DNFs:
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={22}
+                    value={badgeDnfCount}
+                    onChange={(e) =>
+                      setBadgeDnfCount(
+                        Math.max(
+                          0,
+                          Math.min(22, parseInt(e.target.value, 10) || 0)
+                        )
+                      )
+                    }
+                    className="w-20 bg-[#15151E] border border-[#2D2D38] rounded-xl px-3 py-1.5 text-xs font-mono font-bold text-white text-center focus:outline-none focus:border-[#E10600]"
+                  />
+                </div>
               </div>
-            ))}
-          </div>
 
-          {/* Grilla rápida de botones de Q2 */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2">
-            {q2AvailableDrivers.map((p) => {
-              const selected = q2Eliminated.includes(p.id);
-              const esc = getEscuderia(p.escuderia_id);
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => toggleAdminQ2Card(p.id)}
-                  style={{
-                    borderColor: selected
-                      ? "#E10600"
-                      : esc?.color_hex || "#2D2D38",
-                  }}
-                  className={`px-3 py-2 rounded-xl border-2 text-left transition-all ${
-                    selected
-                      ? "bg-[#E10600]/20 text-white ring-2 ring-[#E10600]/50"
-                      : "bg-[#15151E] text-[#D0D0D2] hover:text-white"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10px] font-black text-[#8E8E93]">
-                      {p.id}
-                    </span>
-                    {selected && (
-                      <span className="text-[9px] font-black text-[#E10600]">
-                        OUT Q2
-                      </span>
-                    )}
+              {/* Selector interactivo de pilotos DNF */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+                {pilotos.map((p) => {
+                  const isDnf = badgeDnfDrivers.includes(p.id);
+                  const esc = getEscuderia(p.escuderia_id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => toggleDnfDriver(p.id)}
+                      className={`px-2.5 py-2 rounded-xl border text-left transition-all ${
+                        isDnf
+                          ? "bg-red-950/60 border-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)] ring-1 ring-red-500"
+                          : "bg-[#15151E]/60 border-[#2D2D38] text-[#8E8E93] hover:text-white hover:border-[#3D3D48]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-[10px] font-black">
+                          {p.id}
+                        </span>
+                        {isDnf ? (
+                          <span className="text-[9px] font-black text-red-400 bg-red-900/50 px-1 rounded">
+                            DNF
+                          </span>
+                        ) : (
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: esc?.color_hex || "#888" }}
+                          />
+                        )}
+                      </div>
+                      <p className="text-[11px] font-bold truncate mt-1">
+                        {p.nombre}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* SECCIÓN 4: FORMATO SPRINT */}
+            <div className="space-y-4 pt-4 border-t border-[#2D2D38]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="checkboxIsSprint"
+                    checked={badgeIsSprint}
+                    onChange={(e) => setBadgeIsSprint(e.target.checked)}
+                    className="w-4 h-4 rounded text-amber-500 bg-[#15151E] border-[#2D2D38] focus:ring-amber-500 cursor-pointer"
+                  />
+                  <label
+                    htmlFor="checkboxIsSprint"
+                    className="text-xs font-black uppercase tracking-wider text-amber-300 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Zap className="w-4 h-4 fill-amber-400 text-amber-400" />
+                    <span>Es Formato Sprint (isSprint: true)</span>
+                  </label>
+                </div>
+                <span className="text-[11px] text-[#8E8E93]">
+                  Habilita la evaluación de la insignia <em>&quot;Maestro del Sprint&quot;</em>
+                </span>
+              </div>
+
+              {badgeIsSprint && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-4 rounded-xl bg-amber-500/5 border border-amber-500/20 animate-in fade-in duration-200">
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-200 mb-1">
+                      Pole Sprint
+                    </label>
+                    <select
+                      value={badgeSprintPole}
+                      onChange={(e) => setBadgeSprintPole(e.target.value)}
+                      className="w-full bg-[#15151E] border border-amber-500/30 rounded-xl px-2.5 py-2 text-xs font-bold text-white"
+                    >
+                      <option value="">Seleccionar Pole Sprint...</option>
+                      {pilotos.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} ({p.id})
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <p className="text-xs font-bold truncate mt-0.5">
-                    {p.nombre}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        </div>
 
-        {/* =============================================================== */}
-        {/* 3. GRILLA OFICIAL Q3 (Posiciones 1 Pole al 10)                  */}
-        {/* =============================================================== */}
-        <div className="space-y-3 pt-4 border-t border-[#2D2D38]">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                3. Top 10 Grilla Oficial Q3 (Posiciones 1 Pole al 10)
-              </h3>
-              <p className="text-xs text-[#8E8E93]">
-                1 pt por estar en Top 10 + 1 pt extra por posición exacta (Pole
-                Position P1 otorga +2 pts extras).
-              </p>
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-200 mb-1">
+                      Sprint P1
+                    </label>
+                    <select
+                      value={badgeSprintP1}
+                      onChange={(e) => setBadgeSprintP1(e.target.value)}
+                      className="w-full bg-[#15151E] border border-amber-500/30 rounded-xl px-2.5 py-2 text-xs font-bold text-white"
+                    >
+                      <option value="">Seleccionar Sprint P1...</option>
+                      {pilotos.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} ({p.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-200 mb-1">
+                      Sprint P2
+                    </label>
+                    <select
+                      value={badgeSprintP2}
+                      onChange={(e) => setBadgeSprintP2(e.target.value)}
+                      className="w-full bg-[#15151E] border border-amber-500/30 rounded-xl px-2.5 py-2 text-xs font-bold text-white"
+                    >
+                      <option value="">Seleccionar Sprint P2...</option>
+                      {pilotos.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} ({p.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-200 mb-1">
+                      Sprint P3
+                    </label>
+                    <select
+                      value={badgeSprintP3}
+                      onChange={(e) => setBadgeSprintP3(e.target.value)}
+                      className="w-full bg-[#15151E] border border-amber-500/30 rounded-xl px-2.5 py-2 text-xs font-bold text-white"
+                    >
+                      <option value="">Seleccionar Sprint P3...</option>
+                      {pilotos.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} ({p.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                const used = new Set(q3Slots.filter(Boolean));
-                const rem = q3AvailableDrivers
-                  .map((d) => d.id)
-                  .filter((id) => !used.has(id));
-                let idx = 0;
-                setQ3Slots((prev) =>
-                  prev.map((val) => val || rem[idx++] || "")
-                );
-              }}
-              className="text-xs font-bold text-amber-400 bg-[#15151E] border border-[#2D2D38] px-3 py-1.5 rounded-xl hover:border-amber-400/50"
-            >
-              Completar casilleros vacíos con los restantes
-            </button>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            {q3Slots.map((driverId, idx) => (
-              <div
-                key={idx}
-                className="bg-[#15151E] border border-[#2D2D38] rounded-xl p-3 space-y-1.5"
-              >
-                <label className="block text-[11px] font-black uppercase text-white">
-                  {idx === 0 ? "⚡ P1 (Pole Position)" : `Posición P${idx + 1}`}
-                </label>
-                <select
-                  value={driverId}
-                  onChange={(e) => handleQ3SlotChange(idx, e.target.value)}
-                  className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
-                >
-                  <option value="">Seleccionar piloto...</option>
-                  {q3AvailableDrivers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre} ({p.id})
-                    </option>
-                  ))}
-                </select>
+            {/* Mensajes de Error */}
+            {badgeErrorMsg && (
+              <div className="p-4 rounded-xl bg-red-950/60 border border-[#E10600] text-xs font-bold text-red-200 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-[#E10600] shrink-0" />
+                <span>{badgeErrorMsg}</span>
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* =============================================================== */}
-        {/* 4. PODIO CARRERA PRINCIPAL (P1, P2, P3)                         */}
-        {/* =============================================================== */}
-        <div className="space-y-3 pt-4 border-t border-[#2D2D38]">
-          <h3 className="text-sm font-black text-white uppercase tracking-wider">
-            4. Podio Oficial Carrera Principal (P1: 3 pts • P2: 2 pts • P3: 1 pt)
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-amber-400 mb-1">
-                🥇 Primer Puesto (P1 - 3 pts)
-              </label>
-              <select
-                value={p1}
-                onChange={(e) => setP1(e.target.value)}
-                className="w-full bg-[#15151E] border border-[#2D2D38] rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
-              >
-                <option value="">Seleccionar ganador...</option>
-                {pilotos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre} ({p.escuderia_id})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-zinc-300 mb-1">
-                🥈 Segundo Puesto (P2 - 2 pts)
-              </label>
-              <select
-                value={p2}
-                onChange={(e) => setP2(e.target.value)}
-                className="w-full bg-[#15151E] border border-[#2D2D38] rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
-              >
-                <option value="">Seleccionar P2...</option>
-                {pilotos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre} ({p.escuderia_id})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-amber-600 mb-1">
-                🥉 Tercer Puesto (P3 - 1 pt)
-              </label>
-              <select
-                value={p3}
-                onChange={(e) => setP3(e.target.value)}
-                className="w-full bg-[#15151E] border border-[#2D2D38] rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
-              >
-                <option value="">Seleccionar P3...</option>
-                {pilotos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre} ({p.escuderia_id})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* =============================================================== */}
-        {/* 5. CARRERA SPRINT (SI CORRESPONDE)                              */}
-        {/* =============================================================== */}
-        {selectedGp?.isSprint && (
-          <div className="space-y-3 pt-4 border-t border-[#2D2D38]">
-            <h3 className="text-sm font-black text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Zap className="w-4 h-4 fill-amber-400" />
-              <span>
-                5. Resultados Carrera Sprint (Pole: 1 pt • P1: 3 pts • P2: 2 pts
-                • P3: 1 pt)
-              </span>
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-amber-200 mb-1">
-                  Pole Sprint (1 pt)
-                </label>
-                <select
-                  value={sprintPole}
-                  onChange={(e) => setSprintPole(e.target.value)}
-                  className="w-full bg-[#15151E] border border-amber-500/30 rounded-xl px-3 py-2.5 text-xs font-bold text-white"
-                >
-                  <option value="">Seleccionar...</option>
-                  {pilotos.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre} ({p.escuderia_id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-amber-200 mb-1">
-                  Sprint P1 (3 pts)
-                </label>
-                <select
-                  value={sprintP1}
-                  onChange={(e) => setSprintP1(e.target.value)}
-                  className="w-full bg-[#15151E] border border-amber-500/30 rounded-xl px-3 py-2.5 text-xs font-bold text-white"
-                >
-                  <option value="">Seleccionar...</option>
-                  {pilotos.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre} ({p.escuderia_id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-amber-200 mb-1">
-                  Sprint P2 (2 pts)
-                </label>
-                <select
-                  value={sprintP2}
-                  onChange={(e) => setSprintP2(e.target.value)}
-                  className="w-full bg-[#15151E] border border-amber-500/30 rounded-xl px-3 py-2.5 text-xs font-bold text-white"
-                >
-                  <option value="">Seleccionar...</option>
-                  {pilotos.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre} ({p.escuderia_id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-amber-200 mb-1">
-                  Sprint P3 (1 pt)
-                </label>
-                <select
-                  value={sprintP3}
-                  onChange={(e) => setSprintP3(e.target.value)}
-                  className="w-full bg-[#15151E] border border-amber-500/30 rounded-xl px-3 py-2.5 text-xs font-bold text-white"
-                >
-                  <option value="">Seleccionar...</option>
-                  {pilotos.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre} ({p.escuderia_id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* =============================================================== */}
-        {/* 6. ESPECIALES DE CARRERA (EDICIÓN MANUAL DESTACADA)             */}
-        {/* =============================================================== */}
-        <div className="space-y-3 pt-4 border-t border-[#2D2D38]">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-black text-white uppercase tracking-wider">
-              6. Especiales de Carrera (DNF: 1 pt • Escudería: 1 pt • DOTD: 1 pt
-              • Colapinto: 2 pts)
-            </h3>
-            <span className="text-[11px] font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded-md">
-              Verifica manualmente Piloto del Día y Posición de Franco Colapinto
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-[#D0D0D2] mb-1">
-                Total de Abandonos / DNF (0 - 22)
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={22}
-                value={dnfCount}
-                onChange={(e) =>
-                  setDnfCount(
-                    Math.max(0, Math.min(22, parseInt(e.target.value, 10) || 0))
-                  )
-                }
-                className="w-full bg-[#15151E] border border-[#2D2D38] rounded-xl px-3 py-2.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-[#E10600]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-[#D0D0D2] mb-1">
-                Escudería Ganadora (1 pt)
-              </label>
-              <select
-                value={escuderiaGanadora}
-                onChange={(e) => setEscuderiaGanadora(e.target.value)}
-                className="w-full bg-[#15151E] border border-[#2D2D38] rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
-              >
-                <option value="">Seleccionar escudería...</option>
-                {escuderias.map((esc) => (
-                  <option key={esc.id} value={esc.id}>
-                    {esc.nombre} ({esc.id})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-amber-300 mb-1">
-                ⭐ Piloto del Día / DOTD (1 pt • Revisión Manual)
-              </label>
-              <select
-                value={pilotoDelDia}
-                onChange={(e) => setPilotoDelDia(e.target.value)}
-                className="w-full bg-[#15151E] border border-amber-500/40 rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
-              >
-                <option value="">Seleccionar Piloto del Día...</option>
-                {pilotos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre} ({p.escuderia_id})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-amber-300 mb-1">
-                🇦🇷 Posición Final Franco Colapinto (2 pts)
-              </label>
-              <select
-                value={posicionColapinto}
-                onChange={(e) =>
-                  setPosicionColapinto(parseInt(e.target.value, 10))
-                }
-                className="w-full bg-[#15151E] border border-amber-500/40 rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
-              >
-                <option value={0}>DNF (Abandono / Retiro)</option>
-                {Array.from({ length: 22 }).map((_, idx) => (
-                  <option key={idx + 1} value={idx + 1}>
-                    Posición Final P{idx + 1}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Mensajes de Error o Resultado del Cálculo */}
-        {errorMsg && (
-          <div className="p-4 rounded-xl bg-red-950/60 border border-[#E10600] text-xs font-bold text-red-200 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-[#E10600] shrink-0" />
-            <span>{errorMsg}</span>
-          </div>
-        )}
-
-        {calcResult && (
-          <div className="p-5 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 space-y-3">
-            <div className="flex items-center gap-2 text-emerald-300 font-black text-sm">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-              <span>
-                ¡Resultados Oficiales guardados en Firestore y Puntajes
-                calculados con éxito!
-              </span>
-            </div>
-            <p className="text-xs text-[#D0D0D2]">
-              Se evaluaron{" "}
-              <strong className="text-white">
-                {calcResult.prediccionesEvaluadas}
-              </strong>{" "}
-              pronósticos para este Gran Premio y se actualizaron los puntajes
-              globales de{" "}
-              <strong className="text-white">
-                {calcResult.usuariosActualizados}
-              </strong>{" "}
-              usuarios en el Ranking.
-            </p>
-          </div>
-        )}
-
-        {/* Botón Final de Envío tras Revisión Manual */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-[#2D2D38]">
-          <p className="text-xs text-[#8E8E93]">
-            Al presionar el botón final se guardarán los resultados en{" "}
-            <code>grand_prix</code> y se cruzarán todas las predicciones en{" "}
-            <code>predicciones</code> y <code>users</code>.
-          </p>
-
-          <button
-            type="submit"
-            disabled={processing || syncingApi}
-            className="inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_25px_rgba(16,185,129,0.35)] disabled:opacity-50 transition-all shrink-0"
-          >
-            {processing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Calculator className="w-4 h-4" />
             )}
-            <span>
-              {processing
-                ? "Guardando y Calculando..."
-                : "Guardar y Calcular Puntajes"}
-            </span>
-          </button>
+
+            {/* Resumen Detallado de Éxito al procesar las insignias */}
+            {badgeProcessResult && (
+              <div className="p-5 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 space-y-4">
+                <div className="flex items-center gap-2 text-emerald-300 font-black text-sm">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  <span>
+                    ¡Resultados Procesados y Premios Otorgados Exitosamente!
+                  </span>
+                </div>
+                <p className="text-xs text-[#D0D0D2]">
+                  Se recuperaron{" "}
+                  <strong className="text-white">
+                    {badgeProcessResult.totalPredictions}
+                  </strong>{" "}
+                  pronósticos de usuarios para este Gran Premio y se
+                  actualizaron en lote{" "}
+                  <strong className="text-white">
+                    {badgeProcessResult.updatedUsersCount}
+                  </strong>{" "}
+                  perfiles de la colección <code>users</code> en Firestore.
+                </p>
+
+                {badgeProcessResult.usersSummary.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-emerald-500/20">
+                    <h5 className="text-[11px] font-black uppercase text-emerald-300">
+                      Insignias Desbloqueadas o Incrementadas por Usuario:
+                    </h5>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-60 overflow-y-auto pr-1">
+                      {badgeProcessResult.usersSummary.map((u) => (
+                        <div
+                          key={u.uid}
+                          className="bg-[#15151E] border border-emerald-500/20 rounded-xl p-3 text-xs space-y-1.5"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-white truncate">
+                              {u.nombre || u.email || `Usuario ${u.uid.slice(0, 5)}`}
+                            </span>
+                            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-900/40 px-1.5 py-0.5 rounded">
+                              +{u.awardedBadges.length} insignias
+                            </span>
+                          </div>
+                          {u.awardedBadges.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {u.awardedBadges.map((badgeId) => (
+                                <span
+                                  key={badgeId}
+                                  className="text-[10px] bg-[#1F1F27] border border-[#2D2D38] px-2 py-0.5 rounded-md text-amber-300 font-semibold"
+                                >
+                                  {badgeNameMap.get(badgeId) || badgeId}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-[#8E8E93]">
+                              Sin nuevos aciertos en esta carrera.
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Botón Principal de Procesamiento */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-[#2D2D38]">
+              <p className="text-xs text-[#8E8E93]">
+                Al presionar el botón se leerán todas las predicciones de este Gran Premio y se actualizarán simultáneamente los documentos de cada usuario en <code>users</code> mediante un <code>writeBatch</code>.
+              </p>
+
+              <button
+                type="submit"
+                disabled={processingBadges}
+                className="inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider bg-gradient-to-r from-amber-500 via-[#E10600] to-amber-600 hover:from-amber-400 hover:via-[#b80500] hover:to-amber-500 text-white shadow-[0_0_30px_rgba(245,158,11,0.35)] disabled:opacity-50 transition-all shrink-0 cursor-pointer"
+              >
+                {processingBadges ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Trophy className="w-5 h-5" />
+                )}
+                <span>
+                  {processingBadges
+                    ? "Evaluando y Actualizando en Lote..."
+                    : "Procesar Resultados y Otorgar Premios"}
+                </span>
+              </button>
+            </div>
+          </form>
         </div>
-      </form>
+      )}
+
+      {/* ================================================================= */}
+      {/* PESTAÑA 2: CÁLCULO GENERAL DE PUNTAJES (Q1, Q2, Q3)               */}
+      {/* ================================================================= */}
+      {activeTab === "scoring" && (
+        <div className="space-y-8 animate-in fade-in duration-200">
+          <form
+            onSubmit={handleSaveAndCalculate}
+            className="rounded-2xl bg-[#1F1F27] border border-[#2D2D38] p-6 sm:p-8 space-y-8 shadow-2xl"
+          >
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-[#2D2D38]">
+              <div>
+                <h2 className="text-sm font-black text-white uppercase tracking-wider">
+                  Cálculo de Puntajes de Clasificación (Q1, Q2, Q3) y Podio
+                </h2>
+                <p className="text-xs text-[#8E8E93] mt-1">
+                  Ingresa o sincroniza desde la API la grilla completa de tiempos para calcular la tabla general de posiciones.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleSyncFromF1Api}
+                  disabled={syncingApi || processing}
+                  className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wider bg-[#15151E] border border-[#2D2D38] hover:border-white/30 text-white disabled:opacity-50 transition-all"
+                >
+                  {syncingApi ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <CloudDownload className="w-4 h-4" />
+                  )}
+                  <span>
+                    {syncingApi ? "Consultando API..." : "Autocompletar desde API"}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Banner de Pre-visualización API */}
+            {apiPreviewMeta && (
+              <div className="rounded-2xl bg-amber-500/10 border border-amber-500/40 p-5 space-y-2">
+                <div className="flex items-center gap-2 text-amber-300 font-black text-xs uppercase tracking-wider">
+                  <Edit3 className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>Pre-visualización cargada desde API F1</span>
+                </div>
+                <p className="text-xs text-[#D0D0D2]">
+                  Sesión: <strong>{apiPreviewMeta.sessionRaceName}</strong>. Los datos han sido precargados en el formulario.
+                </p>
+              </div>
+            )}
+
+            {/* 1. Q1 Eliminados */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                    1. Eliminados Oficiales en Q1 (6 pilotos • 1 pt c/u)
+                  </h3>
+                  <p className="text-xs text-[#8E8E93]">
+                    Posiciones 17 a 22 en la clasificación.
+                  </p>
+                </div>
+                <span
+                  className={`font-mono text-sm font-black px-3 py-1 rounded-lg border ${
+                    q1Eliminated.length === 6
+                      ? "bg-emerald-950/50 border-emerald-500/40 text-emerald-400"
+                      : "bg-[#15151E] border-[#2D2D38] text-[#E10600]"
+                  }`}
+                >
+                  {q1Eliminated.length} / 6
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+                {q1Slots.map((driverId, idx) => (
+                  <div
+                    key={idx}
+                    className="bg-[#15151E] border border-[#2D2D38] rounded-xl p-2.5 space-y-1"
+                  >
+                    <label className="block text-[10px] font-black uppercase text-[#8E8E93]">
+                      Eliminado Q1 #{idx + 1}
+                    </label>
+                    <select
+                      value={driverId}
+                      onChange={(e) => handleQ1SlotChange(idx, e.target.value)}
+                      className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
+                    >
+                      <option value="">Seleccionar...</option>
+                      {pilotos.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} ({p.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 2. Q2 Eliminados */}
+            <div className="space-y-4 pt-4 border-t border-[#2D2D38]">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                    2. Eliminados Oficiales en Q2 (6 pilotos • 1 pt c/u)
+                  </h3>
+                  <p className="text-xs text-[#8E8E93]">
+                    Posiciones 11 a 16 en la clasificación.
+                  </p>
+                </div>
+                <span
+                  className={`font-mono text-sm font-black px-3 py-1 rounded-lg border ${
+                    q2Eliminated.length === 6
+                      ? "bg-emerald-950/50 border-emerald-500/40 text-emerald-400"
+                      : "bg-[#15151E] border-[#2D2D38] text-[#E10600]"
+                  }`}
+                >
+                  {q2Eliminated.length} / 6
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+                {q2Slots.map((driverId, idx) => (
+                  <div
+                    key={idx}
+                    className="bg-[#15151E] border border-[#2D2D38] rounded-xl p-2.5 space-y-1"
+                  >
+                    <label className="block text-[10px] font-black uppercase text-[#8E8E93]">
+                      Eliminado Q2 #{idx + 1}
+                    </label>
+                    <select
+                      value={driverId}
+                      onChange={(e) => handleQ2SlotChange(idx, e.target.value)}
+                      className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
+                    >
+                      <option value="">Seleccionar...</option>
+                      {q2AvailableDrivers.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} ({p.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 3. Top 10 Q3 */}
+            <div className="space-y-3 pt-4 border-t border-[#2D2D38]">
+              <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                3. Top 10 Grilla Oficial Q3 (P1 Pole al P10)
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                {q3Slots.map((driverId, idx) => (
+                  <div
+                    key={idx}
+                    className="bg-[#15151E] border border-[#2D2D38] rounded-xl p-3 space-y-1.5"
+                  >
+                    <label className="block text-[11px] font-black uppercase text-white">
+                      {idx === 0 ? "⚡ P1 (Pole Position)" : `Posición P${idx + 1}`}
+                    </label>
+                    <select
+                      value={driverId}
+                      onChange={(e) => handleQ3SlotChange(idx, e.target.value)}
+                      className="w-full bg-[#1F1F27] border border-[#2D2D38] rounded-lg px-2.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-[#E10600]"
+                    >
+                      <option value="">Seleccionar piloto...</option>
+                      {q3AvailableDrivers.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} ({p.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Mensajes de Error y Éxito de Scoring */}
+            {errorMsg && (
+              <div className="p-4 rounded-xl bg-red-950/60 border border-[#E10600] text-xs font-bold text-red-200 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-[#E10600] shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            {calcResult && (
+              <div className="p-5 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 space-y-3">
+                <div className="flex items-center gap-2 text-emerald-300 font-black text-sm">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  <span>¡Puntajes calculados con éxito!</span>
+                </div>
+                <p className="text-xs text-[#D0D0D2]">
+                  Se evaluaron {calcResult.prediccionesEvaluadas} pronósticos y se
+                  actualizaron {calcResult.usuariosActualizados} usuarios en el
+                  Ranking general.
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-4 border-t border-[#2D2D38]">
+              <button
+                type="submit"
+                disabled={processing || syncingApi}
+                className="inline-flex items-center gap-2.5 px-7 py-3.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_25px_rgba(16,185,129,0.35)] disabled:opacity-50 transition-all cursor-pointer"
+              >
+                {processing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Calculator className="w-4 h-4" />
+                )}
+                <span>
+                  {processing
+                    ? "Guardando y Calculando..."
+                    : "Guardar y Calcular Puntajes"}
+                </span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* PESTAÑA 3: GESTIÓN DE BASE DE DATOS (SEED)                         */}
+      {/* ================================================================= */}
+      {activeTab === "seed" && (
+        <div className="space-y-8 animate-in fade-in duration-200">
+          <AdminSeedCard />
+        </div>
+      )}
     </div>
   );
 }

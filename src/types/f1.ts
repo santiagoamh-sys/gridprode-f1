@@ -54,12 +54,14 @@ export interface ResultadosOficiales {
   q2: string[] | string | null;
   // Q3: 10 pilotos ordenados del 1 (Pole Position) al 10
   q3: string[] | string | null;
+  pole?: string | null;
   // Podio Carrera Principal
   p1: string | null;
   p2: string | null;
   p3: string | null;
   // Cantidad exacta de abandonos (DNF) en la carrera (0 a 22)
   dnf: number | string[] | string | null;
+  dnf_drivers?: string[] | null;
   vuelta_rapida?: string | null;
   piloto_del_dia: string | null;
   escuderia: string | null;
@@ -96,10 +98,13 @@ export interface RespuestasPrediccion {
   q1?: string[] | string | null;
   q2?: string[] | string | null;
   q3?: string[] | string | null;
+  pole?: string | null;
   p1?: string | null;
   p2?: string | null;
   p3?: string | null;
   dnf?: number | string[] | string | null;
+  dnfCount?: number | null;
+  dnf_drivers?: string[] | null;
   vuelta_rapida?: string | null;
   piloto_del_dia?: string | null;
   escuderia?: string | null;
