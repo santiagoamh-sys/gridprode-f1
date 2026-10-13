@@ -425,28 +425,45 @@ const CompactTrophyCard: React.FC<CompactTrophyCardProps> = ({
         />
       )}
 
-      {/* Indicador de candado o chip de nivel en la esquina superior */}
-      <div className="w-full flex items-center justify-between z-10">
-        <span className="text-[9px] font-bold text-[#71717A] tracking-wider uppercase truncate max-w-[70px]">
+      {/* Candado sutil posicionado de forma absoluta en la esquina superior derecha */}
+      {isZero && (
+        <div className="absolute top-2.5 right-2.5 z-20 w-6 h-6 rounded-lg bg-black/60 border border-[#2D2D38] flex items-center justify-center text-[#A1A1AA] shadow-md backdrop-blur-sm">
+          <Lock className="w-3.5 h-3.5 text-[#A1A1AA]" />
+        </div>
+      )}
+
+      {/* Indicador de categoría y nivel en la parte superior */}
+      <div className="w-full flex items-center justify-between z-10 pr-6">
+        <span className="text-[9px] font-bold text-[#71717A] tracking-wider uppercase truncate max-w-[75px]">
           {badge.categoria}
         </span>
-        {isZero ? (
-          <div className="w-5 h-5 rounded-md bg-black/40 border border-[#2D2D38] flex items-center justify-center text-[#71717A]">
-            <Lock className="w-3 h-3" />
-          </div>
-        ) : tier === "oro" ? (
-          <span className="w-2.5 h-2.5 rounded-full bg-[#ffd700] shadow-[0_0_8px_#ffd700]" />
-        ) : tier === "plata" ? (
-          <span className="w-2.5 h-2.5 rounded-full bg-[#c0c0c0] shadow-[0_0_8px_#c0c0c0]" />
-        ) : tier === "bronce" ? (
-          <span className="w-2.5 h-2.5 rounded-full bg-[#cd7f32] shadow-[0_0_8px_#cd7f32]" />
-        ) : (
-          <span className="w-2 h-2 rounded-full bg-[#9CA3AF]" />
+        {!isZero && (
+          tier === "oro" ? (
+            <span className="w-2.5 h-2.5 rounded-full bg-[#ffd700] shadow-[0_0_8px_#ffd700]" />
+          ) : tier === "plata" ? (
+            <span className="w-2.5 h-2.5 rounded-full bg-[#c0c0c0] shadow-[0_0_8px_#c0c0c0]" />
+          ) : tier === "bronce" ? (
+            <span className="w-2.5 h-2.5 rounded-full bg-[#cd7f32] shadow-[0_0_8px_#cd7f32]" />
+          ) : (
+            <span className="w-2 h-2 rounded-full bg-[#9CA3AF]" />
+          )
         )}
       </div>
 
-      {/* Protagonista: Ícono Tematizado Grande y Centrado */}
-      <div className="my-auto relative flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
+      {/* Protagonista: Ícono Tematizado Grande y Centrado (con filtro silueta si está bloqueado) */}
+      <div
+        className={`my-auto relative flex items-center justify-center transition-transform duration-300 group-hover:scale-110 ${
+          isZero ? "grayscale opacity-40 brightness-50" : ""
+        }`}
+        style={
+          isZero
+            ? {
+                filter: "grayscale(100%) brightness(0.5)",
+                opacity: 0.4,
+              }
+            : undefined
+        }
+      >
         <ThemedTrophy
           badgeId={badge.id}
           tier={tier}
@@ -598,7 +615,19 @@ const TrophyDetailModal: React.FC<TrophyDetailModalProps> = ({ item, onClose }) 
 
         {/* Cabecera del Modal: Ícono Tematizado en Gran Tamaño */}
         <div className="flex flex-col items-center text-center space-y-3 pt-2">
-          <div className="relative">
+          <div
+            className={`relative ${
+              isZero ? "grayscale opacity-50 brightness-75" : ""
+            }`}
+            style={
+              isZero
+                ? {
+                    filter: "grayscale(100%) brightness(0.65)",
+                    opacity: 0.5,
+                  }
+                : undefined
+            }
+          >
             <ThemedTrophy
               badgeId={badge.id}
               tier={tier}

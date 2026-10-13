@@ -25,14 +25,14 @@ export const ThemedTrophy: React.FC<ThemedTrophyProps> = ({
   // Paleta metálica según tier
   const colors = isZero
     ? {
-        mainGradStart: "#636375",
-        mainGradMid: "#3A3A4A",
-        mainGradEnd: "#232330",
-        highlight: "#8E8E9E",
-        darkAccent: "#181822",
-        rimLight: "#7A7A8E",
+        mainGradStart: "#9E9EB2",
+        mainGradMid: "#66667C",
+        mainGradEnd: "#3A3A4C",
+        highlight: "#D0D0E4",
+        darkAccent: "#20202C",
+        rimLight: "#B8B8CE",
         glow: "none",
-        emblemAccent: "#9E9EAE",
+        emblemAccent: "#E0E0F0",
       }
     : tier === "oro"
     ? {
@@ -215,28 +215,7 @@ export const ThemedTrophy: React.FC<ThemedTrophyProps> = ({
           {renderBadgeEmblem(normalizedId, colors, isZero)}
         </g>
 
-        {/* 6. Efecto de Candado si valor === 0 */}
-        {isZero && (
-          <g transform="translate(56, 52)">
-            {/* Fondo del candado */}
-            <circle cx="14" cy="14" r="17" fill="#14141E" stroke="#71717A" strokeWidth="1.5" opacity="0.95" />
-            {/* Arco del candado */}
-            <path
-              d="M9 12 V8 C9 5.2 11.2 3 14 3 C16.8 3 19 5.2 19 8 V12"
-              stroke="#D4D4D8"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              fill="none"
-            />
-            {/* Cuerpo del candado */}
-            <rect x="6.5" y="11.5" width="15" height="12" rx="2.5" fill="#3F3F46" stroke="#D4D4D8" strokeWidth="1.5" />
-            {/* Ojo de la cerradura */}
-            <circle cx="14" cy="16" r="1.5" fill="#FFFFFF" />
-            <path d="M14 17.5 V20" stroke="#FFFFFF" strokeWidth="1.5" strokeLinecap="round" />
-          </g>
-        )}
-
-        {/* 7. Destellos / Chispas si Nivel Oro */}
+        {/* 6. Destellos / Chispas si Nivel Oro */}
         {!isZero && tier === "oro" && (
           <g>
             {/* Estrella superior izquierda */}
