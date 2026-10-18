@@ -2,6 +2,9 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
+import { useAuth } from "@/context/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Navbar } from "@/components/Navbar";
 import {
@@ -11,10 +14,13 @@ import {
   Trophy,
   CheckCircle2,
   XCircle,
-  RotateCcw,
   Gamepad2,
   Sparkles,
+  Loader2,
+  Lock,
 } from "lucide-react";
+
+const TRIVIA_ID = "austin_2026";
 
 interface TriviaQuestion {
   id: number;
@@ -86,6 +92,15 @@ const QUESTION_TIME_MS = 15000; // 15 segundos por pregunta
 const TICK_INTERVAL_MS = 100;
 
 export default function TriviaGamePage() {
+  const { user, loading: authLoading } = useAuth();
+
+  // Estados de verificación y bloqueo en Firestore
+  const [checkingStatus, setCheckingStatus] = useState<boolean>(true);
+  const [hasPlayed, setHasPlayed] = useState<boolean>(false);
+  const [previousScore, setPreviousScore] = useState<number | null>(null);
+  const [isSavingResult, setIsSavingResult] = useState<boolean>(false);
+
+  // Estados del juego de Trivia
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [score, setScore] = useState<number>(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -107,31 +122,110 @@ export default function TriviaGamePage() {
     }
   }, []);
 
-  // Avanza a la siguiente pregunta o finaliza el cuestionario
-  const moveToNextQuestion = useCallback(() => {
-    clearAdvanceTimeout();
-    if (currentIndex + 1 < TRIVIA_QUESTIONS.length) {
-      setCurrentIndex((prev) => prev + 1);
-      setSelectedOption(null);
-      setIsLocked(false);
-      setTimeLeftMs(QUESTION_TIME_MS);
-    } else {
-      setIsFinished(true);
+  // 1. Verificar al cargar si el usuario ya completó esta trivia en Firestore
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (!user?.uid || !db) {
+      setCheckingStatus(false);
+      return;
     }
-  }, [clearAdvanceTimeout, currentIndex]);
+
+    let isMounted = true;
+
+    const verifyTriviaStatus = async () => {
+      try {
+        setCheckingStatus(true);
+        const triviaDocRef = doc(db, "users", user.uid, "trivias", TRIVIA_ID);
+        const snap = await getDoc(triviaDocRef);
+
+        if (!isMounted) return;
+
+        if (snap.exists()) {
+          const data = snap.data();
+          const saved =
+            typeof data.score === "number"
+              ? data.score
+              : typeof data.puntaje === "number"
+              ? data.puntaje
+              : 0;
+          setPreviousScore(saved);
+          setHasPlayed(true);
+        } else {
+          setHasPlayed(false);
+        }
+      } catch (error) {
+        console.error("Error al verificar el estado de la trivia en Firestore:", error);
+      } finally {
+        if (isMounted) {
+          setCheckingStatus(false);
+        }
+      }
+    };
+
+    verifyTriviaStatus();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.uid, authLoading]);
+
+  // 2. Guardar resultado final en Firestore antes de mostrar la pantalla de resultados
+  const saveFinalScoreAndFinish = useCallback(
+    async (finalScore: number) => {
+      try {
+        setIsSavingResult(true);
+        if (db && user?.uid) {
+          const triviaDocRef = doc(db, "users", user.uid, "trivias", TRIVIA_ID);
+          await setDoc(triviaDocRef, {
+            triviaId: TRIVIA_ID,
+            score: finalScore,
+            totalQuestions: TRIVIA_QUESTIONS.length,
+            fecha: new Date().toISOString(),
+            completedAt: serverTimestamp(),
+          });
+        }
+      } catch (error) {
+        console.error("Error al guardar el resultado de la trivia en Firestore:", error);
+      } finally {
+        setIsSavingResult(false);
+        setIsFinished(true);
+      }
+    },
+    [user?.uid]
+  );
+
+  // Avanza a la siguiente pregunta o guarda y finaliza el cuestionario
+  const moveToNextQuestion = useCallback(
+    (updatedScore: number) => {
+      clearAdvanceTimeout();
+      if (currentIndex + 1 < TRIVIA_QUESTIONS.length) {
+        setCurrentIndex((prev) => prev + 1);
+        setSelectedOption(null);
+        setIsLocked(false);
+        setTimeLeftMs(QUESTION_TIME_MS);
+      } else {
+        saveFinalScoreAndFinish(updatedScore);
+      }
+    },
+    [clearAdvanceTimeout, currentIndex, saveFinalScoreAndFinish]
+  );
 
   // Procesa la selección de una opción o el vencimiento del tiempo (optionIdx = null)
   const handleSelectOption = useCallback(
     (optionIdx: number | null) => {
-      if (isLocked || isFinished) return;
+      if (checkingStatus || hasPlayed || isLocked || isFinished || isSavingResult) {
+        return;
+      }
       setIsLocked(true);
       setSelectedOption(optionIdx);
 
       const isCorrect =
         optionIdx !== null && optionIdx === currentQuestion.correctIndex;
 
+      const nextScore = isCorrect ? score + 1 : score;
       if (isCorrect) {
-        setScore((prev) => prev + 1);
+        setScore(nextScore);
       }
 
       setAnswersSummary((prev) => [
@@ -145,15 +239,26 @@ export default function TriviaGamePage() {
 
       // Pasar automáticamente a la siguiente pregunta tras breve feedback visual
       advanceTimeoutRef.current = setTimeout(() => {
-        moveToNextQuestion();
+        moveToNextQuestion(nextScore);
       }, 650);
     },
-    [currentQuestion, isFinished, isLocked, moveToNextQuestion]
+    [
+      checkingStatus,
+      currentQuestion,
+      hasPlayed,
+      isFinished,
+      isLocked,
+      isSavingResult,
+      moveToNextQuestion,
+      score,
+    ]
   );
 
-  // Temporizador regresivo de 10 segundos por pregunta
+  // Temporizador regresivo de 15 segundos por pregunta (pausado mientras carga o si ya jugó)
   useEffect(() => {
-    if (isFinished || isLocked) return;
+    if (checkingStatus || hasPlayed || isFinished || isLocked || isSavingResult) {
+      return;
+    }
 
     const interval = setInterval(() => {
       setTimeLeftMs((prev) => {
@@ -166,31 +271,35 @@ export default function TriviaGamePage() {
     }, TICK_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [currentIndex, isFinished, isLocked]);
+  }, [checkingStatus, currentIndex, hasPlayed, isFinished, isLocked, isSavingResult]);
 
   // Cuando el temporizador llega a 0, avanzar automáticamente
   useEffect(() => {
-    if (timeLeftMs === 0 && !isLocked && !isFinished) {
+    if (
+      !checkingStatus &&
+      !hasPlayed &&
+      timeLeftMs === 0 &&
+      !isLocked &&
+      !isFinished &&
+      !isSavingResult
+    ) {
       handleSelectOption(null);
     }
-  }, [timeLeftMs, isLocked, isFinished, handleSelectOption]);
+  }, [
+    checkingStatus,
+    hasPlayed,
+    timeLeftMs,
+    isLocked,
+    isFinished,
+    isSavingResult,
+    handleSelectOption,
+  ]);
 
   useEffect(() => {
     return () => {
       clearAdvanceTimeout();
     };
   }, [clearAdvanceTimeout]);
-
-  const handleRestartTrivia = () => {
-    clearAdvanceTimeout();
-    setCurrentIndex(0);
-    setScore(0);
-    setSelectedOption(null);
-    setIsLocked(false);
-    setTimeLeftMs(QUESTION_TIME_MS);
-    setAnswersSummary([]);
-    setIsFinished(false);
-  };
 
   const progressRatio = Math.max(0, Math.min(1, timeLeftMs / QUESTION_TIME_MS));
   const secondsLeft = Math.ceil(timeLeftMs / 1000);
@@ -212,7 +321,7 @@ export default function TriviaGamePage() {
               <span>Volver al Hub de Minijuegos</span>
             </Link>
 
-            {!isFinished && (
+            {!checkingStatus && !hasPlayed && !isFinished && (
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#1F1F27]/80 border border-white/10 text-xs font-bold text-white">
                 <Trophy className="w-3.5 h-3.5 text-amber-400" />
                 <span>
@@ -224,9 +333,72 @@ export default function TriviaGamePage() {
           </div>
 
           {/* =============================================================== */}
-          {/* VISTA DE PREGUNTA ACTIVA                                        */}
+          {/* 1. ESTADO DE CARGA (EVITA PARPADEO DE PREGUNTAS)                */}
           {/* =============================================================== */}
-          {!isFinished ? (
+          {checkingStatus || isSavingResult ? (
+            <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-10 sm:p-14 shadow-2xl text-center space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
+                <Loader2 className="w-8 h-8 animate-spin" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-lg sm:text-xl font-black text-white">
+                  {isSavingResult
+                    ? "Guardando tu puntaje oficial..."
+                    : "Verificando estado de la trivia..."}
+                </h2>
+                <p className="text-xs sm:text-sm text-[#8E8E93]">
+                  {isSavingResult
+                    ? "Registrando tu resultado en Firebase Firestore."
+                    : "Comprobando tu participación en el GP de Estados Unidos (Austin)."}
+                </p>
+              </div>
+            </div>
+          ) : hasPlayed ? (
+            /* =============================================================== */
+            /* 2. PANTALLA ESTÁTICA DE 'YA JUGASTE'                            */
+            /* =============================================================== */
+            <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-7 sm:p-10 shadow-2xl text-center space-y-8 animate-in fade-in duration-200">
+              <div className="w-20 h-20 rounded-3xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400 mx-auto shadow-[0_0_30px_rgba(245,158,11,0.2)]">
+                <Lock className="w-9 h-9" />
+              </div>
+
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-black uppercase tracking-wider">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Participación Registrada • {TRIVIA_ID.toUpperCase()}</span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                  Ya completaste la trivia de esta semana
+                </h1>
+                <p className="text-xs sm:text-sm text-[#8E8E93] max-w-md mx-auto leading-relaxed">
+                  Solo se permite un intento oficial por Gran Premio. Tu puntaje ya se encuentra guardado en tu perfil.
+                </p>
+              </div>
+
+              {/* Tarjeta con el puntaje obtenido */}
+              <div className="max-w-sm mx-auto rounded-2xl bg-[#15151E]/95 border border-white/10 p-6 space-y-2 shadow-inner">
+                <p className="text-xs font-black uppercase tracking-widest text-[#8E8E93]">
+                  Puntaje Obtenido
+                </p>
+                <p className="text-3xl sm:text-4xl font-black font-mono text-amber-400">
+                  {previousScore ?? 0}/{TRIVIA_QUESTIONS.length} respuestas correctas
+                </p>
+              </div>
+
+              <div className="pt-4 border-t border-white/10 flex justify-center">
+                <Link
+                  href="/minijuegos"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-xs sm:text-sm font-black uppercase tracking-wider text-white shadow-[0_0_25px_rgba(245,158,11,0.35)] transition-all"
+                >
+                  <Gamepad2 className="w-4 h-4" />
+                  <span>Volver al Hub de Minijuegos</span>
+                </Link>
+              </div>
+            </div>
+          ) : !isFinished ? (
+            /* =============================================================== */
+            /* 3. VISTA DE PREGUNTA ACTIVA                                     */
+            /* =============================================================== */
             <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-6 sm:p-9 shadow-2xl space-y-7">
               {/* Cabecera: Contador de pregunta + Temporizador numérico */}
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -256,7 +428,7 @@ export default function TriviaGamePage() {
                 </div>
               </div>
 
-              {/* Barra de Progreso del Temporizador (10 segundos) animada por transform */}
+              {/* Barra de Progreso del Temporizador (15 segundos) animada por transform */}
               <div className="space-y-1.5">
                 <div className="w-full h-2.5 rounded-full bg-[#15151E] border border-white/10 overflow-hidden">
                   <div
@@ -339,7 +511,7 @@ export default function TriviaGamePage() {
             </div>
           ) : (
             /* =============================================================== */
-            /* PANTALLA DE RESULTADOS FINALES                                  */
+            /* 4. PANTALLA DE RESULTADOS FINALES (TRAS GUARDAR EN FIRESTORE)   */
             /* =============================================================== */
             <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-7 sm:p-10 shadow-2xl text-center space-y-8 animate-in fade-in duration-300">
               <div className="w-20 h-20 rounded-3xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400 mx-auto shadow-[0_0_30px_rgba(245,158,11,0.25)]">
@@ -347,19 +519,19 @@ export default function TriviaGamePage() {
               </div>
 
               <div className="space-y-2">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-black uppercase tracking-wider">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-black uppercase tracking-wider">
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Trivia Completada</span>
+                  <span>Puntaje Guardado • {TRIVIA_ID.toUpperCase()}</span>
                 </div>
                 <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
                   Resultados de tu Trivia
                 </h1>
                 <p className="text-sm text-[#8E8E93] max-w-md mx-auto">
                   {score === 5
-                    ? "¡Pleno absoluto! Tienes conocimiento de Ingeniero Jefe de Pista."
+                    ? "¡Pleno absoluto en Austin! Tienes conocimiento de Ingeniero Jefe de Pista."
                     : score >= 3
-                    ? "¡Gran desempeño! Sumaste buenos puntos para el campeonato."
-                    : "Sigue entrenando en el simulador para la próxima semana."}
+                    ? "¡Gran desempeño en COTA! Tu resultado quedó registrado oficialmente."
+                    : "Tu participación semanal ha quedado registrada. ¡Nos vemos en el próximo GP!"}
                 </p>
               </div>
 
@@ -368,14 +540,12 @@ export default function TriviaGamePage() {
                 <p className="text-xs font-black uppercase tracking-widest text-[#8E8E93]">
                   Puntaje Total Obtenido
                 </p>
-                <p className="text-5xl font-black font-mono text-white">
-                  {score}{" "}
-                  <span className="text-2xl text-[#8E8E93]">
-                    / {TRIVIA_QUESTIONS.length}
-                  </span>
+                <p className="text-4xl sm:text-5xl font-black font-mono text-white">
+                  {score}/{TRIVIA_QUESTIONS.length}
                 </p>
                 <p className="text-xs font-bold text-amber-400 pt-1">
-                  {Math.round((score / TRIVIA_QUESTIONS.length) * 100)}% de efectividad
+                  {score}/{TRIVIA_QUESTIONS.length} respuestas correctas (
+                  {Math.round((score / TRIVIA_QUESTIONS.length) * 100)}%)
                 </p>
               </div>
 
@@ -398,20 +568,11 @@ export default function TriviaGamePage() {
                 ))}
               </div>
 
-              {/* Botones de Acción Final */}
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={handleRestartTrivia}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-[#15151E] hover:bg-[#252532] border border-white/15 text-xs sm:text-sm font-black uppercase tracking-wider text-white transition-all cursor-pointer"
-                >
-                  <RotateCcw className="w-4 h-4 text-amber-400" />
-                  <span>Jugar de Nuevo</span>
-                </button>
-
+              {/* Botón de retorno al Hub */}
+              <div className="flex items-center justify-center pt-4 border-t border-white/10">
                 <Link
                   href="/minijuegos"
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-xs sm:text-sm font-black uppercase tracking-wider text-white shadow-[0_0_25px_rgba(245,158,11,0.35)] transition-all"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-xs sm:text-sm font-black uppercase tracking-wider text-white shadow-[0_0_25px_rgba(245,158,11,0.35)] transition-all"
                 >
                   <Gamepad2 className="w-4 h-4" />
                   <span>Volver al Hub de Minijuegos</span>
