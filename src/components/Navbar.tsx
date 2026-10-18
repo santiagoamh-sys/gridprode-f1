@@ -14,6 +14,7 @@ import {
   Ticket,
   Medal,
   Award,
+  Gamepad2,
   ShieldAlert,
 } from "lucide-react";
 
@@ -71,6 +72,12 @@ export const Navbar: React.FC = () => {
       mobileLabel: "Premios",
       icon: Award,
     },
+    {
+      href: "/minijuegos",
+      label: "Minijuegos",
+      mobileLabel: "Juegos",
+      icon: Gamepad2,
+    },
     ...(isAdmin
       ? [
           {
@@ -115,7 +122,8 @@ export const Navbar: React.FC = () => {
             <nav className="hidden md:flex items-center justify-center gap-6 lg:gap-8">
               {navLinks.map((item) => {
                 const Icon = item.icon;
-                const isActive = pathname === item.href;
+                const isActive =
+                  pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
                   <Link
                     key={item.href}
