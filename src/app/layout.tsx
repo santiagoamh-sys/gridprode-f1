@@ -46,7 +46,7 @@ export default function RootLayout({
           <F1DataProvider>
             <PredictionWizardProvider>
               <FirebaseConfigAlert />
-              <div className="flex-1 flex flex-col">{children}</div>
+              <div className="flex-1 flex flex-col pb-20 md:pb-0">{children}</div>
               <PredictionWizardModal />
             </PredictionWizardProvider>
           </F1DataProvider>
