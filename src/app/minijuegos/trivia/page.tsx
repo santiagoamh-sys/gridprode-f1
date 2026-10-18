@@ -27,62 +27,62 @@ interface TriviaQuestion {
 const TRIVIA_QUESTIONS: TriviaQuestion[] = [
   {
     id: 1,
-    category: "Historia Argentina en F1",
+    category: "GP de Estados Unidos • Austin (COTA)",
     question:
-      "¿Con qué escudería debutó oficialmente Franco Colapinto en la Fórmula 1 durante el Gran Premio de Italia 2024 en Monza?",
-    options: ["Alpine", "Williams Racing", "Sauber", "Haas F1 Team"],
+      "¿En qué año se corrió por primera vez el Gran Premio de Estados Unidos en el Circuito de las Américas (COTA)?",
+    options: ["2010", "2012", "2014", "2016"],
     correctIndex: 1,
   },
   {
     id: 2,
-    category: "Récords Históricos",
+    category: "GP de Estados Unidos • Austin (COTA)",
     question:
-      "¿Qué pilotos comparten el récord histórico de 7 Campeonatos Mundiales de Pilotos de Fórmula 1?",
+      "¿Qué piloto tiene el récord histórico de mayor cantidad de victorias en el circuito de Austin?",
     options: [
-      "Ayrton Senna y Alain Prost",
-      "Juan Manuel Fangio y Sebastian Vettel",
-      "Michael Schumacher y Lewis Hamilton",
-      "Max Verstappen y Niki Lauda",
+      "Sebastian Vettel",
+      "Max Verstappen",
+      "Lewis Hamilton",
+      "Charles Leclerc",
     ],
     correctIndex: 2,
   },
   {
     id: 3,
-    category: "Reglamento Técnico",
+    category: "GP de Estados Unidos • Austin (COTA)",
     question:
-      "¿Cómo se llama el sistema aerodinámico móvil del alerón trasero que reduce la resistencia al aire para facilitar los adelantamientos?",
+      "¿Qué característica topográfica hace única y desafiante a la famosa Curva 1 de este trazado?",
     options: [
-      "ERS (Energy Recovery System)",
-      "DRS (Drag Reduction System)",
-      "KERS (Kinetic Energy System)",
-      "MGU-K (Motor Generator Unit)",
+      "Un peralte invertido",
+      "Una subida muy pronunciada y ciega",
+      "Un túnel oscuro",
+      "Es la curva más estrecha del mundial",
     ],
     correctIndex: 1,
   },
   {
     id: 4,
-    category: "Circuitos Legendarios",
+    category: "GP de Estados Unidos • Austin (COTA)",
     question:
-      "¿Cuál es la famosa combinación de curvas en subida del circuito de Spa-Francorchamps considerada una de las más exigentes del mundo?",
-    options: [
-      "Maggotts y Becketts",
-      "Parabólica / Alboreto",
-      "Eau Rouge y Raidillon",
-      "S de Senna",
-    ],
+      "¿De cuántas curvas en total consta el trazado del Circuito de las Américas?",
+    options: ["18", "19", "20", "21"],
     correctIndex: 2,
   },
   {
     id: 5,
-    category: "Estrategia de Carrera",
+    category: "GP de Estados Unidos • Austin (COTA)",
     question:
-      "En neumáticos de seco Pirelli de Fórmula 1, ¿qué color identifica al compuesto Blando (Soft), el más rápido a una vuelta?",
-    options: ["Blanco", "Amarillo", "Rojo", "Verde"],
-    correctIndex: 2,
+      "En 2018, ¿qué querido piloto rompió una larga sequía de años sin triunfos ganando magistralmente el GP de Estados Unidos con Ferrari?",
+    options: [
+      "Fernando Alonso",
+      "Carlos Sainz",
+      "Sebastian Vettel",
+      "Kimi Räikkönen",
+    ],
+    correctIndex: 3,
   },
 ];
 
-const QUESTION_TIME_MS = 10000; // 10 segundos por pregunta
+const QUESTION_TIME_MS = 15000; // 15 segundos por pregunta
 const TICK_INTERVAL_MS = 100;
 
 export default function TriviaGamePage() {

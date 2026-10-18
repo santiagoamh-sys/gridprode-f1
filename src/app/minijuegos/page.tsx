@@ -36,11 +36,11 @@ export default function MinijuegosHubPage() {
       title: "Trivia Semanal",
       subtitle: "Desafío Contrarreloj • 5 Preguntas",
       description:
-        "Demuestra cuánto sabes de la historia y actualidad de la Fórmula 1. Responde 5 preguntas de opción múltiple con un reloj límite de 10 segundos por pregunta.",
+        "Demuestra cuánto sabes de la historia y actualidad de la Fórmula 1. Responde 5 preguntas de opción múltiple con un reloj límite de 15 segundos por pregunta.",
       href: "/minijuegos/trivia",
       icon: Brain,
       badgeIcon: HelpCircle,
-      badgeText: "10s por pregunta",
+      badgeText: "15s por pregunta",
       accentColor: "#F59E0B",
       glowClass:
         "hover:border-amber-500/60 hover:shadow-[0_0_35px_rgba(245,158,11,0.2)]",
