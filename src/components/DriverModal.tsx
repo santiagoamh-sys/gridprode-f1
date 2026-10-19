@@ -267,7 +267,7 @@ export const DriverModal: React.FC<DriverModalProps> = ({
               </h3>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
               {/* Edad */}
               <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
@@ -285,6 +285,16 @@ export const DriverModal: React.FC<DriverModalProps> = ({
                 </span>
                 <span className="text-base sm:text-lg font-black text-white font-mono">
                   {driver.debut_anio ? driver.debut_anio : "—"}
+                </span>
+              </div>
+
+              {/* Carreras Históricas */}
+              <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
+                  Carreras
+                </span>
+                <span className="text-base sm:text-lg font-black text-white font-mono">
+                  {driver.carreras_totales !== undefined ? driver.carreras_totales : "—"}
                 </span>
               </div>
 
@@ -318,7 +328,7 @@ export const DriverModal: React.FC<DriverModalProps> = ({
               </div>
 
               {/* Podios Históricos */}
-              <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm col-span-2 sm:col-span-1">
+              <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
                   Podios
                 </span>

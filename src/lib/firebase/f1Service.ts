@@ -103,21 +103,24 @@ export async function getPilotos(): Promise<Piloto[]> {
   try {
     const snapshot = await getDocs(collection(db, "pilotos"));
     if (!snapshot.empty) {
-      return snapshot.docs.map((d) => {
+      const firestoreById = new Map<string, Piloto>();
+      snapshot.docs.forEach((d) => {
         const data = d.data() as Piloto;
-        const initialDriver = INITIAL_PILOTOS.find((p) => p.id === data.id);
-        if (
-          initialDriver &&
-          (!data.foto_url ||
-            data.foto_url.includes("wikimedia.org") ||
-            data.foto_url.includes("wikipedia.org"))
-        ) {
-          return {
-            ...data,
-            foto_url: initialDriver.foto_url,
-          };
-        }
-        return data;
+        if (data?.id) firestoreById.set(data.id, data);
+      });
+
+      return INITIAL_PILOTOS.map((initialDriver) => {
+        const stored = firestoreById.get(initialDriver.id);
+        const hasValidCustomPhoto =
+          stored?.foto_url &&
+          !stored.foto_url.includes("wikimedia.org") &&
+          !stored.foto_url.includes("wikipedia.org");
+
+        return {
+          ...stored,
+          ...initialDriver,
+          foto_url: hasValidCustomPhoto ? stored.foto_url : initialDriver.foto_url,
+        };
       });
     }
     return INITIAL_PILOTOS;

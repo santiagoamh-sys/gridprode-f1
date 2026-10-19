@@ -15,6 +15,7 @@ export interface Piloto {
   bandera?: string;
   edad?: number;
   debut_anio?: number;
+  carreras_totales?: number;
   titulos_mundiales?: number;
   victorias_totales?: number;
   podios_totales?: number;
