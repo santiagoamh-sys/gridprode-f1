@@ -30,133 +30,166 @@ import {
   Zap,
 } from "lucide-react";
 
-const LAP_DURATION_MS = 15000; // 15 segundos exactos para completar la vuelta
+const LAP_DURATION_MS = 15000; // 15.0 segundos exactos para la vuelta completa
 const MAX_DAILY_ATTEMPTS = 3;
 const MAX_POSSIBLE_POINTS = 40; // 8 curvas * 5 pts
 
-/**
- * Trazado SVG cerrado (viewBox="0 0 800 500") que representa el Circuito de las Américas (Austin - COTA).
- * Comienza en la recta principal (230, 410), sube hacia la Curva 1 (95, 220),
- * enlaza las Esses (Curvas 3-9), llega a la horquilla de la Curva 11 (705, 105),
- * recorre la larga recta opuesta hasta la Curva 12 (415, 245), atraviesa el Estadio (Curva 15),
- * rodea la triple derecha (Curvas 16-18) y cierra en la Curva 20 (380, 455) hacia la meta.
- */
-const COTA_TRACK_PATH =
-  "M 230 410 " +
-  "L 95 220 " +
-  "C 82 198, 112 182, 145 190 " +
-  "C 185 200, 215 135, 255 145 " +
-  "C 300 156, 335 195, 380 165 " +
-  "C 415 142, 425 110, 455 115 " +
-  "C 510 124, 610 92, 705 105 " +
-  "C 732 109, 730 135, 695 148 " +
-  "L 415 245 " +
-  "C 382 256, 365 215, 325 225 " +
-  "C 285 235, 248 282, 275 305 " +
-  "C 305 330, 360 285, 420 275 " +
-  "C 485 265, 535 305, 515 345 " +
-  "C 495 385, 440 365, 415 390 " +
-  "C 392 412, 405 448, 380 455 " +
-  "C 340 465, 275 435, 230 410 Z";
+// Nuevas tolerancias competitivas estrictas (en segundos)
+const TOLERANCE_VIOLETA_S = 0.08; // <= 80ms -> +5 pts
+const TOLERANCE_VERDE_S = 0.2;    // <= 200ms -> +3 pts
+const TOLERANCE_AMARILLO_S = 0.4; // <= 400ms -> +1 pt
 
 export type HitTier = "violeta" | "verde" | "amarillo" | "rojo";
 
-export interface ApexDefinition {
-  id: number; // 1..8
+export interface CircuitApexConfig {
+  id: number; // 1 al 8
   name: string;
-  anchorX: number;
-  anchorY: number;
-  labelOffsetX: number;
-  labelOffsetY: number;
-  defaultIdealTimeMs: number;
-}
-
-export interface ComputedApex extends ApexDefinition {
   x: number;
   y: number;
-  idealTimeMs: number;
-  progress: number;
+  idealTime: number; // Tiempo ideal en segundos (0 a 15)
+  idealTimeMs: number; // Tiempo ideal en milisegundos (0 a 15000)
+  labelOffsetX: number;
+  labelOffsetY: number;
+}
+
+export interface CircuitConfig {
+  id: string;
+  name: string;
+  grandPrix: string;
+  viewBox: string;
+  startPoint: { x: number; y: number; angleDeg: number };
+  pathD: string;
+  apexes: CircuitApexConfig[];
 }
 
 /**
- * Los 8 indicadores de APEX obligatorios sobre el trazado de Austin.
- * Sus coordenadas y tiempos ideales exactos se sincronizan con getPointAtLength()
- * al montar el SVG para garantizar precisión milimétrica.
+ * Configuración del circuito de la semana: GP de Estados Unidos - Circuito de las Américas (COTA).
+ * La silueta respeta fielmente el trazado real de Austin:
+ * - Recta principal en subida hacia la horquilla aguda de la Curva 1 (85, 235)
+ * - Secuencia en zig-zag de Las Esses (Curvas 2 a 9)
+ * - Recta hacia la horquilla extrema Este en la Curva 11 (730, 95)
+ * - Larga recta opuesta diagonal hasta la fuerte frenada de la Curva 12 (340, 275)
+ * - Sector trabado del Estadio (Curvas 13 a 15 en 335, 360)
+ * - Carrusel de la Torre de Observación (Triple derecha Curvas 16-18 en 490, 385)
+ * - Doble izquierda final (Curvas 19 y 20 en 330, 455) hacia la recta principal.
+ *
+ * Cada uno de los 8 APEX tiene sus coordenadas (x, y) exactamente sobre el vértice del <path>
+ * y su idealTime / idealTimeMs calibrado exactamente con la longitud de arco acumulada sobre 15s.
  */
-const INITIAL_APEX_DEFINITIONS: ApexDefinition[] = [
-  {
-    id: 1,
-    name: "Curva 1 (Subida)",
-    anchorX: 95,
-    anchorY: 220,
-    labelOffsetX: -42,
-    labelOffsetY: -18,
-    defaultIdealTimeMs: 1680,
-  },
-  {
-    id: 2,
-    name: "Las Esses",
-    anchorX: 255,
-    anchorY: 145,
-    labelOffsetX: 0,
-    labelOffsetY: -22,
-    defaultIdealTimeMs: 3250,
-  },
-  {
-    id: 3,
-    name: "Sector Técnico",
-    anchorX: 455,
-    anchorY: 115,
-    labelOffsetX: 0,
-    labelOffsetY: -22,
-    defaultIdealTimeMs: 5050,
-  },
-  {
-    id: 4,
-    name: "Horquilla C11",
-    anchorX: 705,
-    anchorY: 105,
-    labelOffsetX: 12,
-    labelOffsetY: -22,
-    defaultIdealTimeMs: 6950,
-  },
-  {
-    id: 5,
-    name: "Frenada C12",
-    anchorX: 415,
-    anchorY: 245,
-    labelOffsetX: 38,
-    labelOffsetY: 22,
-    defaultIdealTimeMs: 9450,
-  },
-  {
-    id: 6,
-    name: "Estadio C15",
-    anchorX: 275,
-    anchorY: 305,
-    labelOffsetX: -44,
-    labelOffsetY: 16,
-    defaultIdealTimeMs: 11100,
-  },
-  {
-    id: 7,
-    name: "Triple Derecha",
-    anchorX: 515,
-    anchorY: 345,
-    labelOffsetX: 46,
-    labelOffsetY: 6,
-    defaultIdealTimeMs: 12800,
-  },
-  {
-    id: 8,
-    name: "Curva 20",
-    anchorX: 380,
-    anchorY: 455,
-    labelOffsetX: 10,
-    labelOffsetY: 26,
-    defaultIdealTimeMs: 14050,
-  },
-];
+export const currentCircuit: CircuitConfig = {
+  id: "austin_cota_2026",
+  name: "Circuito de las Américas (COTA)",
+  grandPrix: "GP de Estados Unidos • Austin",
+  viewBox: "0 0 800 500",
+  startPoint: { x: 210, y: 350, angleDeg: -47 },
+  pathD:
+    "M 210 350 " +
+    "L 85 235 " +
+    "L 155 265 " +
+    "L 190 225 " +
+    "L 225 240 " +
+    "L 260 195 " +
+    "L 305 210 " +
+    "L 345 165 " +
+    "L 395 185 " +
+    "L 430 145 " +
+    "L 565 115 " +
+    "L 730 95 " +
+    "L 340 275 " +
+    "L 395 315 " +
+    "L 420 285 " +
+    "L 450 305 " +
+    "L 335 360 " +
+    "L 435 330 " +
+    "L 475 345 " +
+    "L 490 385 " +
+    "L 445 425 " +
+    "L 375 410 " +
+    "L 330 455 " +
+    "Z",
+  apexes: [
+    {
+      id: 1,
+      name: "Curva 1 (Subida)",
+      x: 85,
+      y: 235,
+      idealTime: 1.18,
+      idealTimeMs: 1180,
+      labelOffsetX: 0,
+      labelOffsetY: -22,
+    },
+    {
+      id: 2,
+      name: "Curva 5 (Las Esses)",
+      x: 260,
+      y: 195,
+      idealTime: 2.74,
+      idealTimeMs: 2740,
+      labelOffsetX: -10,
+      labelOffsetY: -22,
+    },
+    {
+      id: 3,
+      name: "Curva 8 (Sector Esses)",
+      x: 395,
+      y: 185,
+      idealTime: 3.862,
+      idealTimeMs: 3862,
+      labelOffsetX: 8,
+      labelOffsetY: -22,
+    },
+    {
+      id: 4,
+      name: "Curva 11 (Horquilla Este)",
+      x: 730,
+      y: 95,
+      idealTime: 6.348,
+      idealTimeMs: 6348,
+      labelOffsetX: 0,
+      labelOffsetY: -22,
+    },
+    {
+      id: 5,
+      name: "Curva 12 (Fin Recta Opuesta)",
+      x: 340,
+      y: 275,
+      idealTime: 9.333,
+      idealTimeMs: 9333,
+      labelOffsetX: -48,
+      labelOffsetY: -6,
+    },
+    {
+      id: 6,
+      name: "Curva 15 (Estadio)",
+      x: 335,
+      y: 360,
+      idealTime: 11.214,
+      idealTimeMs: 11214,
+      labelOffsetX: -46,
+      labelOffsetY: 14,
+    },
+    {
+      id: 7,
+      name: "Curvas 16-18 (Torre)",
+      x: 490,
+      y: 385,
+      idealTime: 12.534,
+      idealTimeMs: 12534,
+      labelOffsetX: 48,
+      labelOffsetY: 4,
+    },
+    {
+      id: 8,
+      name: "Curva 20 (Última Curva)",
+      x: 330,
+      y: 455,
+      idealTime: 13.892,
+      idealTimeMs: 13892,
+      labelOffsetX: 0,
+      labelOffsetY: 24,
+    },
+  ],
+};
 
 interface FloatingFeedback {
   key: string;
@@ -196,7 +229,7 @@ function getCurrentWeekId(now: Date = new Date()): string {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const dayStr = String(d.getDate()).padStart(2, "0");
-  return `semana_${year}_${month}_${dayStr}`;
+  return `${currentCircuit.id}_${year}_${month}_${dayStr}`;
 }
 
 export default function VueltaRapidaPage() {
@@ -210,26 +243,9 @@ export default function VueltaRapidaPage() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [isSavingLap, setIsSavingLap] = useState<boolean>(false);
 
-  // Estados del juego ("idle" | "running" | "finished")
-  const [gameState, setGameState] = useState<"idle" | "running" | "finished">(
-    "idle"
-  );
-  const [elapsedMs, setElapsedMs] = useState<number>(0);
-  const [dotPos, setDotPos] = useState<{ x: number; y: number }>({
-    x: 230,
-    y: 410,
-  });
-
-  // Geometría sincronizada de los 8 APEX sobre el SVG path
-  const [apexList, setApexList] = useState<ComputedApex[]>(() =>
-    INITIAL_APEX_DEFINITIONS.map((def) => ({
-      ...def,
-      x: def.anchorX,
-      y: def.anchorY,
-      idealTimeMs: def.defaultIdealTimeMs,
-      progress: def.defaultIdealTimeMs / LAP_DURATION_MS,
-    }))
-  );
+  // Estados del juego: hasStarted se activa instantáneamente con 0ms de delay
+  const [hasStarted, setHasStarted] = useState<boolean>(false);
+  const [isFinished, setIsFinished] = useState<boolean>(false);
 
   // Resultados por cada uno de los 8 APEX en la vuelta actual
   const [apexResults, setApexResults] = useState<Record<number, HitTier>>({});
@@ -238,18 +254,44 @@ export default function VueltaRapidaPage() {
   >([]);
   const [isNewWeeklyBest, setIsNewWeeklyBest] = useState<boolean>(false);
 
-  // Referencias para animación de alta precisión con requestAnimationFrame
+  // Referencias DOM directas para animación a 120fps con 0ms de delay de arranque
   const trackPathRef = useRef<SVGPathElement | null>(null);
   const totalPathLengthRef = useRef<number>(0);
+  const dotGlowRef = useRef<SVGCircleElement | null>(null);
+  const dotCoreRef = useRef<SVGCircleElement | null>(null);
+  const timerDisplayRef = useRef<HTMLSpanElement | null>(null);
+
   const rafIdRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
-  const apexListRef = useRef<ComputedApex[]>(apexList);
-  const apexResultsRef = useRef<Record<number, HitTier>>({});
+  const isRunningRef = useRef<boolean>(false);
   const hasFinishedLapRef = useRef<boolean>(false);
+  const apexResultsRef = useRef<Record<number, HitTier>>({});
 
-  useEffect(() => {
-    apexListRef.current = apexList;
-  }, [apexList]);
+  // Callback ref para cachear la longitud total del <path> apenas se monta en el DOM
+  const setTrackPathNode = useCallback((node: SVGPathElement | null) => {
+    trackPathRef.current = node;
+    if (node) {
+      try {
+        totalPathLengthRef.current = node.getTotalLength();
+      } catch {
+        totalPathLengthRef.current = 0;
+      }
+    }
+  }, []);
+
+  // Posicionar el punto luminoso en (x, y) directamente sobre el DOM sin re-renderizar React
+  const setDotDomPosition = useCallback((x: number, y: number) => {
+    const cx = String(x);
+    const cy = String(y);
+    if (dotGlowRef.current) {
+      dotGlowRef.current.setAttribute("cx", cx);
+      dotGlowRef.current.setAttribute("cy", cy);
+    }
+    if (dotCoreRef.current) {
+      dotCoreRef.current.setAttribute("cx", cx);
+      dotCoreRef.current.setAttribute("cy", cy);
+    }
+  }, []);
 
   // Calcular desglose de puntos y aciertos en tiempo real desde apexResults
   const counts = React.useMemo(() => {
@@ -307,7 +349,6 @@ export default function VueltaRapidaPage() {
           }
         });
 
-        // Asegurar que el registro del usuario actual esté reflejado
         if (fallbackUserEntry) {
           const idx = entries.findIndex(
             (e) => e.userId === fallbackUserEntry.userId
@@ -382,7 +423,10 @@ export default function VueltaRapidaPage() {
         setDailyAttempts(currentCount);
 
         let userBest: number | null = null;
-        if (recordSnap.exists() && typeof recordSnap.data().puntaje === "number") {
+        if (
+          recordSnap.exists() &&
+          typeof recordSnap.data().puntaje === "number"
+        ) {
           userBest = recordSnap.data().puntaje;
           setWeeklyRecord(userBest);
         }
@@ -424,82 +468,27 @@ export default function VueltaRapidaPage() {
     return () => {
       isMounted = false;
     };
-  }, [user?.uid, user?.displayName, user?.email, profile?.nombre, authLoading, fetchWeeklyLeaderboard]);
+  }, [
+    user?.uid,
+    user?.displayName,
+    user?.email,
+    profile?.nombre,
+    authLoading,
+    fetchWeeklyLeaderboard,
+  ]);
 
-  // 2. Medir el <path> del circuito al montarse y calcular tiempos ideales exactos de cada APEX
-  const syncPathGeometry = useCallback(() => {
-    const pathEl = trackPathRef.current;
-    if (!pathEl) return;
-
-    try {
-      const totalLen = pathEl.getTotalLength();
-      if (!totalLen || totalLen <= 0) return;
-      totalPathLengthRef.current = totalLen;
-
-      // Posición inicial en la largada (distancia 0)
-      const startPt = pathEl.getPointAtLength(0);
-      if (gameState === "idle") {
-        setDotPos({ x: startPt.x, y: startPt.y });
-      }
-
-      // Encontrar el punto exacto sobre el SVG path para cada uno de los 8 APEX
-      const sampleSteps = 1500;
-      const computed: ComputedApex[] = INITIAL_APEX_DEFINITIONS.map((def) => {
-        let bestDistSq = Infinity;
-        let bestLen = (def.defaultIdealTimeMs / LAP_DURATION_MS) * totalLen;
-
-        for (let i = 0; i <= sampleSteps; i++) {
-          const len = (i / sampleSteps) * totalLen;
-          const pt = pathEl.getPointAtLength(len);
-          const dx = pt.x - def.anchorX;
-          const dy = pt.y - def.anchorY;
-          const distSq = dx * dx + dy * dy;
-          if (distSq < bestDistSq) {
-            bestDistSq = distSq;
-            bestLen = len;
-          }
-        }
-
-        const exactPt = pathEl.getPointAtLength(bestLen);
-        const progress = bestLen / totalLen;
-        const idealTimeMs = Math.round(progress * LAP_DURATION_MS);
-
-        return {
-          ...def,
-          x: exactPt.x,
-          y: exactPt.y,
-          progress,
-          idealTimeMs,
-        };
-      });
-
-      computed.sort((a, b) => a.idealTimeMs - b.idealTimeMs);
-      setApexList(computed);
-      apexListRef.current = computed;
-    } catch (err) {
-      console.warn("No se pudo medir la geometría del SVG:", err);
-    }
-  }, [gameState]);
-
-  useEffect(() => {
-    syncPathGeometry();
-  }, [syncPathGeometry, checkingAccess, isDayAllowed]);
-
-  // Disparar un cartel flotante efímero sobre el circuito
+  // Disparar cartel flotante efímero sobre el APEX evaluado
   const spawnFloatingFeedback = useCallback(
-    (apex: ComputedApex, tier: HitTier, customSubtext?: string) => {
-      const config: Record<
-        HitTier,
-        { text: string; defaultSub: string }
-      > = {
-        violeta: { text: "¡VIOLETA! +5", defaultSub: "APEX PERFECTO" },
-        verde: { text: "¡VERDE! +3", defaultSub: "BUENA TRAZADA" },
-        amarillo: { text: "¡AMARILLO! +1", defaultSub: "TRAZADA ABIERTA" },
-        rojo: { text: "¡ROJO! +0", defaultSub: "FUERA DE TIEMPO" },
+    (apex: CircuitApexConfig, tier: HitTier, customSubtext?: string) => {
+      const config: Record<HitTier, { text: string; defaultSub: string }> = {
+        violeta: { text: "¡VIOLETA! +5", defaultSub: "≤ 80ms • PERFECTO" },
+        verde: { text: "¡VERDE! +3", defaultSub: "≤ 200ms • GRAN TRAZADA" },
+        amarillo: { text: "¡AMARILLO! +1", defaultSub: "≤ 400ms • AL LÍMITE" },
+        rojo: { text: "¡ROJO! +0", defaultSub: "> 400ms • FUERA DE TIEMPO" },
       };
 
       const item: FloatingFeedback = {
-        key: `${apex.id}-${Date.now()}-${Math.random()}`,
+        key: `${apex.id}-${performance.now()}`,
         apexId: apex.id,
         x: apex.x,
         y: apex.y,
@@ -512,14 +501,14 @@ export default function VueltaRapidaPage() {
 
       setTimeout(() => {
         setFloatingFeedbacks((prev) => prev.filter((f) => f.key !== item.key));
-      }, 1150);
+      }, 1050);
     },
     []
   );
 
   // Registrar resultado de un APEX de forma sincrónica y en estado React
   const recordApexOutcome = useCallback(
-    (apex: ComputedApex, tier: HitTier, subtext?: string) => {
+    (apex: CircuitApexConfig, tier: HitTier, subtext?: string) => {
       if (apexResultsRef.current[apex.id]) return;
       apexResultsRef.current = {
         ...apexResultsRef.current,
@@ -531,20 +520,20 @@ export default function VueltaRapidaPage() {
     [spawnFloatingFeedback]
   );
 
-  // 4. Finalizar vuelta y guardar intento + récord semanal en Firestore
+  // Finalizar vuelta y guardar intento + récord semanal en Firestore
   const handleFinishLap = useCallback(async () => {
     if (hasFinishedLapRef.current) return;
     hasFinishedLapRef.current = true;
+    isRunningRef.current = false;
 
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
 
-    // Cualquier APEX que haya quedado sin presionar se marca como ROJO (0 pts)
-    const currentApexes = apexListRef.current;
+    // Cualquier APEX no presionado al concluir la vuelta queda como ROJO (0 pts)
     const finalMap: Record<number, HitTier> = { ...apexResultsRef.current };
-    currentApexes.forEach((ap) => {
+    currentCircuit.apexes.forEach((ap) => {
       if (!finalMap[ap.id]) {
         finalMap[ap.id] = "rojo";
       }
@@ -552,7 +541,6 @@ export default function VueltaRapidaPage() {
     apexResultsRef.current = finalMap;
     setApexResults(finalMap);
 
-    // Calcular puntaje final obtenido sobre 40 puntos posibles
     let finalScore = 0;
     Object.values(finalMap).forEach((tier) => {
       if (tier === "violeta") finalScore += 5;
@@ -570,6 +558,7 @@ export default function VueltaRapidaPage() {
 
     setWeeklyRecord(bestScoreToKeep);
     setIsNewWeeklyBest(achievedNewBest);
+    setIsFinished(true);
     setIsSavingLap(true);
 
     const now = new Date();
@@ -583,7 +572,6 @@ export default function VueltaRapidaPage() {
 
     try {
       if (db && user?.uid) {
-        // 4.1 Incrementar en +1 el contador de intentos diarios del usuario
         const intentosRef = doc(
           db,
           "users",
@@ -601,7 +589,6 @@ export default function VueltaRapidaPage() {
           { merge: true }
         );
 
-        // 4.2 Guardar Récord Semanal solo si no tenía registro o si superó su récord previo
         if (achievedNewBest) {
           const userRecordRef = doc(
             db,
@@ -622,6 +609,7 @@ export default function VueltaRapidaPage() {
             userId: user.uid,
             nombre: displayName,
             puntaje: finalScore,
+            circuitoId: currentCircuit.id,
             semanaId,
             fecha: now.toISOString(),
             updatedAt: serverTimestamp(),
@@ -648,7 +636,6 @@ export default function VueltaRapidaPage() {
       );
     } finally {
       setIsSavingLap(false);
-      setGameState("finished");
     }
   }, [
     dailyAttempts,
@@ -660,24 +647,47 @@ export default function VueltaRapidaPage() {
     fetchWeeklyLeaderboard,
   ]);
 
-  // Bucle de animación de la vuelta (15 segundos exactos)
+  const handleFinishLapRef = useRef(handleFinishLap);
   useEffect(() => {
-    if (gameState !== "running") return;
+    handleFinishLapRef.current = handleFinishLap;
+  }, [handleFinishLap]);
+
+  const recordApexOutcomeRef = useRef(recordApexOutcome);
+  useEffect(() => {
+    recordApexOutcomeRef.current = recordApexOutcome;
+  }, [recordApexOutcome]);
+
+  // Bucle imperativo de alta frecuencia (0ms de delay al presionar ¡ARRANCAR!)
+  const startImmediateLoop = useCallback(() => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
 
     const pathEl = trackPathRef.current;
     if (pathEl && totalPathLengthRef.current <= 0) {
       totalPathLengthRef.current = pathEl.getTotalLength();
     }
 
-    startTimeRef.current = performance.now();
+    const startTimestamp = performance.now();
+    startTimeRef.current = startTimestamp;
+    isRunningRef.current = true;
     hasFinishedLapRef.current = false;
 
-    const step = (now: number) => {
-      const elapsed = now - startTimeRef.current;
-      const clampedElapsed = Math.min(elapsed, LAP_DURATION_MS);
-      setElapsedMs(clampedElapsed);
+    const missToleranceMs = TOLERANCE_AMARILLO_S * 1000; // 400ms
 
-      // Actualizar posición milimétrica del punto luminoso sobre el SVG path
+    const tick = (now: number) => {
+      if (!isRunningRef.current) return;
+
+      const elapsed = Math.max(0, now - startTimeRef.current);
+      const clampedElapsed = Math.min(elapsed, LAP_DURATION_MS);
+
+      // Actualizar cronómetro directamente en el DOM sin provocar re-renders en cada frame
+      if (timerDisplayRef.current) {
+        timerDisplayRef.current.textContent = `${(clampedElapsed / 1000).toFixed(2)}s / 15.00s`;
+      }
+
+      // Mover el punto luminoso directamente en el DOM sobre el <path>
       const currentPath = trackPathRef.current;
       const totalLen =
         totalPathLengthRef.current ||
@@ -686,94 +696,90 @@ export default function VueltaRapidaPage() {
       if (currentPath && totalLen > 0) {
         const progress = clampedElapsed / LAP_DURATION_MS;
         const pt = currentPath.getPointAtLength(progress * totalLen);
-        setDotPos({ x: pt.x, y: pt.y });
+        setDotDomPosition(pt.x, pt.y);
       }
 
-      // Verificar si algún APEX fue pasado de largo sin presionar (> 1.0s después del tiempo ideal)
-      const list = apexListRef.current;
-      for (let i = 0; i < list.length; i++) {
-        const ap = list[i];
+      // Marcar automáticamente como ROJO (0 pts) cualquier APEX que se haya pasado por > 0.4s (400ms)
+      const apexes = currentCircuit.apexes;
+      for (let i = 0; i < apexes.length; i++) {
+        const ap = apexes[i];
         if (!apexResultsRef.current[ap.id]) {
-          const nextAp = list[i + 1];
-          const sectorLimitMs = nextAp
-            ? Math.min(
-                ap.idealTimeMs + 1000,
-                (ap.idealTimeMs + nextAp.idealTimeMs) / 2 + 250
-              )
-            : ap.idealTimeMs + 1000;
-
-          if (clampedElapsed > sectorLimitMs) {
-            recordApexOutcome(ap, "rojo", "PASADO DE LARGO");
+          if (clampedElapsed > ap.idealTimeMs + missToleranceMs) {
+            recordApexOutcomeRef.current(ap, "rojo", "NO PRESIONADO");
           }
         }
       }
 
       if (elapsed >= LAP_DURATION_MS) {
-        handleFinishLap();
+        handleFinishLapRef.current();
         return;
       }
 
-      rafIdRef.current = requestAnimationFrame(step);
+      rafIdRef.current = requestAnimationFrame(tick);
     };
 
-    rafIdRef.current = requestAnimationFrame(step);
+    // Ejecutar el primer paso de inmediato (0ms de espera) y encolar el siguiente frame
+    tick(startTimestamp);
+  }, [setDotDomPosition]);
 
+  // Limpiar animación al desmontar el componente
+  useEffect(() => {
     return () => {
+      isRunningRef.current = false;
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
       }
     };
-  }, [gameState, handleFinishLap, recordApexOutcome]);
+  }, []);
 
-  // Iniciar la vuelta al presionar "¡ARRANCAR!"
+  // 1. Acción "¡ARRANCAR!" con respuesta instantánea (0ms delay)
   const handleStartLap = useCallback(() => {
-    if (dailyAttempts >= MAX_DAILY_ATTEMPTS) return;
+    if (dailyAttempts >= MAX_DAILY_ATTEMPTS || isRunningRef.current) return;
 
-    syncPathGeometry();
     apexResultsRef.current = {};
     setApexResults({});
     setFloatingFeedbacks([]);
-    setElapsedMs(0);
     setIsNewWeeklyBest(false);
-    hasFinishedLapRef.current = false;
+    setIsFinished(false);
+    setHasStarted(true);
 
-    const pathEl = trackPathRef.current;
-    if (pathEl) {
-      const startPt = pathEl.getPointAtLength(0);
-      setDotPos({ x: startPt.x, y: startPt.y });
-    }
+    setDotDomPosition(
+      currentCircuit.startPoint.x,
+      currentCircuit.startPoint.y
+    );
 
-    setGameState("running");
-  }, [dailyAttempts, syncPathGeometry]);
+    // Disparo inmediato en el mismo ciclo de evento
+    startImmediateLoop();
+  }, [dailyAttempts, setDotDomPosition, startImmediateLoop]);
 
-  // Evaluar la pulsación del botón "¡DOBLAR!"
+  // 2. Acción "¡DOBLAR!" con nuevas tolerancias competitivas estrictas (80ms / 200ms / 400ms)
   const handleTurnAction = useCallback(() => {
-    if (gameState !== "running") return;
+    if (!isRunningRef.current) return;
 
-    const currentElapsed = Math.min(
-      performance.now() - startTimeRef.current,
+    const currentElapsedMs = Math.min(
+      Math.max(0, performance.now() - startTimeRef.current),
       LAP_DURATION_MS
     );
 
-    const list = apexListRef.current;
-    const pendingApexes = list.filter((ap) => !apexResultsRef.current[ap.id]);
+    const pendingApexes = currentCircuit.apexes.filter(
+      (ap) => !apexResultsRef.current[ap.id]
+    );
     if (pendingApexes.length === 0) return;
 
-    // Identificar el APEX pendiente más cercano al instante de la pulsación
+    // Identificar el APEX pendiente más cercano al instante exacto de la pulsación
     let closestApex = pendingApexes[0];
-    let minDiffMs = Math.abs(currentElapsed - closestApex.idealTimeMs);
+    let minDiffMs = Math.abs(currentElapsedMs - closestApex.idealTimeMs);
 
     for (let i = 1; i < pendingApexes.length; i++) {
       const candidate = pendingApexes[i];
-      const diff = Math.abs(currentElapsed - candidate.idealTimeMs);
+      const diff = Math.abs(currentElapsedMs - candidate.idealTimeMs);
       if (diff < minDiffMs) {
         minDiffMs = diff;
         closestApex = candidate;
       }
     }
 
-    // Si había algún APEX anterior sin evaluar antes del más cercano, marcarlo como ROJO (pasado)
+    // Si algún APEX anterior quedó sin evaluar, marcarlo como ROJO (0 pts)
     for (const ap of pendingApexes) {
       if (ap.id < closestApex.id) {
         recordApexOutcome(ap, "rojo", "PASADO DE LARGO");
@@ -781,38 +787,46 @@ export default function VueltaRapidaPage() {
     }
 
     const diffSeconds = minDiffMs / 1000;
-    const deltaLabel = `${diffSeconds.toFixed(3)}s`;
+    const deltaMsText = `${Math.round(minDiffMs)}ms`;
 
-    if (diffSeconds <= 0.2) {
-      recordApexOutcome(closestApex, "violeta", `Δ ${deltaLabel}`);
-    } else if (diffSeconds <= 0.5) {
-      recordApexOutcome(closestApex, "verde", `Δ ${deltaLabel}`);
-    } else if (diffSeconds <= 1.0) {
-      recordApexOutcome(closestApex, "amarillo", `Δ ${deltaLabel}`);
+    if (diffSeconds <= TOLERANCE_VIOLETA_S) {
+      // <= 0.08s (80ms): VIOLETA (+5 pts)
+      recordApexOutcome(closestApex, "violeta", `Δ ${deltaMsText}`);
+    } else if (diffSeconds <= TOLERANCE_VERDE_S) {
+      // <= 0.2s (200ms): VERDE (+3 pts)
+      recordApexOutcome(closestApex, "verde", `Δ ${deltaMsText}`);
+    } else if (diffSeconds <= TOLERANCE_AMARILLO_S) {
+      // <= 0.4s (400ms): AMARILLO (+1 pt)
+      recordApexOutcome(closestApex, "amarillo", `Δ ${deltaMsText}`);
     } else {
-      recordApexOutcome(closestApex, "rojo", `Δ ${deltaLabel}`);
+      // > 0.4s (400ms): ROJO (0 pts)
+      recordApexOutcome(closestApex, "rojo", `Δ ${deltaMsText}`);
     }
-  }, [gameState, recordApexOutcome]);
+  }, [recordApexOutcome]);
 
   // Reiniciar para otro intento (si le quedan intentos del día)
   const handleResetToIdle = useCallback(() => {
     if (dailyAttempts >= MAX_DAILY_ATTEMPTS) return;
+    isRunningRef.current = false;
+    hasFinishedLapRef.current = false;
     apexResultsRef.current = {};
     setApexResults({});
     setFloatingFeedbacks([]);
-    setElapsedMs(0);
-    const pathEl = trackPathRef.current;
-    if (pathEl) {
-      const startPt = pathEl.getPointAtLength(0);
-      setDotPos({ x: startPt.x, y: startPt.y });
+    setHasStarted(false);
+    setIsFinished(false);
+    setDotDomPosition(
+      currentCircuit.startPoint.x,
+      currentCircuit.startPoint.y
+    );
+    if (timerDisplayRef.current) {
+      timerDisplayRef.current.textContent = "0.00s / 15.00s";
     }
-    setGameState("idle");
-  }, [dailyAttempts]);
+  }, [dailyAttempts, setDotDomPosition]);
 
-  // Encontrar cuál es el próximo APEX activo para indicarlo en la telemetría
+  // Próximo APEX pendiente para resaltarlo en pista
   const nextPendingApex = React.useMemo(() => {
-    return apexList.find((ap) => !apexResults[ap.id]) || null;
-  }, [apexList, apexResults]);
+    return currentCircuit.apexes.find((ap) => !apexResults[ap.id]) || null;
+  }, [apexResults]);
 
   const fastestLapHolder = leaderboard.length > 0 ? leaderboard[0] : null;
   const attemptsRemaining = Math.max(0, MAX_DAILY_ATTEMPTS - dailyAttempts);
@@ -850,7 +864,8 @@ export default function VueltaRapidaPage() {
                 <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-xl bg-cyan-500/15 border border-cyan-400/40 text-xs sm:text-sm font-black text-cyan-300 shadow-[0_0_20px_rgba(6,182,212,0.2)]">
                   <Flame className="w-4 h-4 text-cyan-400" />
                   <span>
-                    Intentos diarios: {Math.min(dailyAttempts, MAX_DAILY_ATTEMPTS)} de{" "}
+                    Intentos diarios:{" "}
+                    {Math.min(dailyAttempts, MAX_DAILY_ATTEMPTS)} de{" "}
                     {MAX_DAILY_ATTEMPTS}
                   </span>
                 </div>
@@ -907,7 +922,7 @@ export default function VueltaRapidaPage() {
                 </Link>
               </div>
             </div>
-          ) : dailyAttempts >= MAX_DAILY_ATTEMPTS && gameState !== "finished" ? (
+          ) : dailyAttempts >= MAX_DAILY_ATTEMPTS && !isFinished ? (
             /* =============================================================== */
             /* 3. BLOQUEO POR LÍMITE DE 3 INTENTOS DIARIOS AGOTADOS            */
             /* =============================================================== */
@@ -943,7 +958,7 @@ export default function VueltaRapidaPage() {
                 </Link>
               </div>
             </div>
-          ) : gameState === "finished" ? (
+          ) : isFinished ? (
             /* =============================================================== */
             /* 4. PANTALLA FINAL DE RESUMEN Y MINI LEADERBOARD SEMANAL         */
             /* =============================================================== */
@@ -1037,13 +1052,12 @@ export default function VueltaRapidaPage() {
                     </h2>
                   </div>
                   <span className="text-[11px] font-bold text-purple-300 bg-purple-500/15 border border-purple-500/30 px-2.5 py-0.5 rounded-full">
-                    GP de Austin
+                    {currentCircuit.grandPrix}
                   </span>
                 </div>
 
                 {fastestLapHolder ? (
                   <div className="space-y-3">
-                    {/* Tarjeta destacada del líder actual */}
                     <div className="flex items-center justify-between gap-4 p-4 rounded-xl bg-gradient-to-r from-purple-950/70 via-[#1F1F27] to-[#1F1F27] border border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.2)]">
                       <div className="flex items-center gap-3.5">
                         <div className="w-10 h-10 rounded-xl bg-purple-500 text-white font-mono font-black text-sm flex items-center justify-center shadow-md">
@@ -1071,12 +1085,11 @@ export default function VueltaRapidaPage() {
                           {fastestLapHolder.puntaje} pts
                         </p>
                         <p className="text-[10px] uppercase tracking-wider text-[#8E8E93]">
-                           de {MAX_POSSIBLE_POINTS} posibles
+                          de {MAX_POSSIBLE_POINTS} posibles
                         </p>
                       </div>
                     </div>
 
-                    {/* Top 5 adicional si hay más participantes */}
                     {leaderboard.slice(1, 5).map((entry, idx) => (
                       <div
                         key={entry.userId}
@@ -1149,7 +1162,7 @@ export default function VueltaRapidaPage() {
               {/* HUD Superior: Puntuación Acumulada y Desglose en Tiempo Real */}
               <div className="rounded-3xl bg-[#1F1F27]/85 backdrop-blur-xl border border-white/10 p-4 sm:p-6 shadow-xl">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  {/* Título y Cronómetro de Vuelta */}
+                  {/* Título del circuito activo y Cronómetro de Vuelta */}
                   <div className="flex items-center justify-between sm:justify-start gap-4">
                     <div className="flex items-center gap-3">
                       <div className="w-11 h-11 rounded-2xl bg-cyan-500/15 border border-cyan-400/40 flex items-center justify-center text-cyan-400 shrink-0">
@@ -1157,7 +1170,7 @@ export default function VueltaRapidaPage() {
                       </div>
                       <div>
                         <span className="text-[10px] font-black uppercase tracking-widest text-cyan-400 block">
-                          GP de Estados Unidos • COTA (15.0s)
+                          {currentCircuit.grandPrix} • {currentCircuit.name}
                         </span>
                         <h1 className="text-lg sm:text-xl font-black text-white tracking-tight">
                           Vuelta Rápida
@@ -1166,7 +1179,7 @@ export default function VueltaRapidaPage() {
                     </div>
 
                     <div className="px-3.5 py-1.5 rounded-xl bg-[#15151E] border border-white/10 font-mono text-xs sm:text-sm font-black text-cyan-300">
-                      {(elapsedMs / 1000).toFixed(2)}s / 15.00s
+                      <span ref={timerDisplayRef}>0.00s / 15.00s</span>
                     </div>
                   </div>
 
@@ -1198,31 +1211,31 @@ export default function VueltaRapidaPage() {
                 </div>
               </div>
 
-              {/* Contenedor Interactivo del Trazado SVG 2D (800x500) */}
+              {/* Contenedor Interactivo del Trazado SVG Dinámico */}
               <div className="relative rounded-3xl bg-[#111118]/90 backdrop-blur-xl border border-white/10 p-3 sm:p-6 shadow-2xl overflow-hidden">
-                {/* Luz ambiental de fondo */}
                 <div className="absolute -top-24 left-1/3 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
                 <div className="absolute -bottom-24 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
                 {/* Sub-barra informativa dentro del visor de telemetría */}
                 <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 mb-2 px-2 text-[11px] font-bold text-[#8E8E93]">
                   <span>
-                    Presiona <strong className="text-white">¡DOBLAR!</strong> justo
-                    cuando el punto luminoso pase por el centro de cada{" "}
+                    Presiona <strong className="text-white">¡DOBLAR!</strong> con
+                    precisión milimétrica al pasar por cada{" "}
                     <strong className="text-cyan-400">APEX (1 al 8)</strong>
                   </span>
                   {nextPendingApex && (
                     <span className="text-cyan-300 font-mono">
-                      Próximo objetivo: APEX {nextPendingApex.id} (
-                      {(nextPendingApex.idealTimeMs / 1000).toFixed(2)}s)
+                      Próximo: APEX {nextPendingApex.id} •{" "}
+                      {nextPendingApex.name} (
+                      {nextPendingApex.idealTime.toFixed(2)}s)
                     </span>
                   )}
                 </div>
 
-                {/* Lienzo SVG 800x500 */}
+                {/* Lienzo SVG dinámico según currentCircuit.viewBox */}
                 <div className="relative w-full aspect-[8/5] max-h-[460px] mx-auto">
                   <svg
-                    viewBox="0 0 800 500"
+                    viewBox={currentCircuit.viewBox}
                     className="w-full h-full overflow-visible"
                   >
                     <defs>
@@ -1259,64 +1272,66 @@ export default function VueltaRapidaPage() {
                       </filter>
                     </defs>
 
-                    {/* Borde exterior del asfalto */}
+                    {/* Borde exterior del asfalto / pianos */}
                     <path
-                      d={COTA_TRACK_PATH}
+                      d={currentCircuit.pathD}
                       fill="none"
-                      stroke="rgba(255, 255, 255, 0.12)"
-                      strokeWidth="28"
+                      stroke="rgba(255, 255, 255, 0.14)"
+                      strokeWidth="26"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
 
                     {/* Pista principal gris oscuro semi-translúcido (Path de referencia para getPointAtLength) */}
                     <path
-                      ref={trackPathRef}
-                      d={COTA_TRACK_PATH}
+                      ref={setTrackPathNode}
+                      d={currentCircuit.pathD}
                       fill="none"
-                      stroke="rgba(55, 58, 70, 0.85)"
-                      strokeWidth="22"
+                      stroke="rgba(55, 58, 70, 0.88)"
+                      strokeWidth="20"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
 
-                    {/* Línea de trazada central sutil */}
+                    {/* Línea de trazada ideal interna */}
                     <path
-                      d={COTA_TRACK_PATH}
+                      d={currentCircuit.pathD}
                       fill="none"
-                      stroke="rgba(6, 182, 212, 0.18)"
+                      stroke="rgba(6, 182, 212, 0.2)"
                       strokeWidth="2"
                       strokeDasharray="6 8"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
 
-                    {/* Línea de Largada / Meta en (230, 410) */}
-                    <g transform="translate(230, 410) rotate(-54)">
+                    {/* Línea de Largada / Meta */}
+                    <g
+                      transform={`translate(${currentCircuit.startPoint.x}, ${currentCircuit.startPoint.y}) rotate(${currentCircuit.startPoint.angleDeg})`}
+                    >
                       <rect
                         x="-3"
-                        y="-14"
+                        y="-13"
                         width="6"
-                        height="28"
+                        height="26"
                         rx="1.5"
                         fill="#FFFFFF"
-                        opacity="0.9"
+                        opacity="0.95"
                       />
                       <line
                         x1="0"
-                        y1="-14"
+                        y1="-13"
                         x2="0"
-                        y2="14"
+                        y2="13"
                         stroke="#E10600"
                         strokeWidth="2"
                         strokeDasharray="4 4"
                       />
                     </g>
                     <text
-                      x="212"
-                      y="442"
+                      x={currentCircuit.startPoint.x - 42}
+                      y={currentCircuit.startPoint.y + 24}
                       fill="#9CA3AF"
-                      fontSize="10"
+                      fontSize="9.5"
                       fontWeight="800"
                       textAnchor="middle"
                       className="uppercase tracking-widest font-mono"
@@ -1324,12 +1339,11 @@ export default function VueltaRapidaPage() {
                       LARGADA / META
                     </text>
 
-                    {/* Los 8 Indicadores Fijos de APEX (Círculos brillantes azul/cian con palabra APEX + número 1..8) */}
-                    {apexList.map((apex) => {
+                    {/* Los 8 Indicadores Fijos de APEX desde currentCircuit.apexes */}
+                    {currentCircuit.apexes.map((apex) => {
                       const tier = apexResults[apex.id];
                       const isNext =
-                        gameState === "running" &&
-                        nextPendingApex?.id === apex.id;
+                        hasStarted && nextPendingApex?.id === apex.id;
 
                       let ringColor = "#22D3EE"; // Cian brillante por defecto
                       let badgeBg = "rgba(8, 51, 68, 0.92)";
@@ -1363,7 +1377,6 @@ export default function VueltaRapidaPage() {
 
                       return (
                         <g key={apex.id}>
-                          {/* Halo pulsante para el siguiente APEX activo */}
                           {isNext && (
                             <circle
                               cx={apex.x}
@@ -1377,20 +1390,20 @@ export default function VueltaRapidaPage() {
                             />
                           )}
 
-                          {/* Círculo brillante azul/cian fijo sobre el centro del APEX */}
+                          {/* Círculo brillante azul/cian fijo sobre el centro exacto del APEX */}
                           <circle
                             cx={apex.x}
                             cy={apex.y}
-                            r="7"
+                            r="6.5"
                             fill="rgba(6, 182, 212, 0.28)"
                             stroke={ringColor}
-                            strokeWidth="2.5"
+                            strokeWidth="2.4"
                             filter="url(#apex-cyan-glow)"
                           />
                           <circle
                             cx={apex.x}
                             cy={apex.y}
-                            r="2.2"
+                            r="2"
                             fill="#ECFEFF"
                           />
 
@@ -1422,18 +1435,20 @@ export default function VueltaRapidaPage() {
                       );
                     })}
 
-                    {/* El Móvil: Punto Luminoso muy pequeño (7px de diámetro = r 3.5) con efecto glow/LED */}
+                    {/* El Móvil: Punto Luminoso muy pequeño (7px de diámetro = r 3.5) animado vía DOM refs */}
                     <g>
                       <circle
-                        cx={dotPos.x}
-                        cy={dotPos.y}
+                        ref={dotGlowRef}
+                        cx={currentCircuit.startPoint.x}
+                        cy={currentCircuit.startPoint.y}
                         r="6"
-                        fill="rgba(34, 211, 238, 0.35)"
+                        fill="rgba(34, 211, 238, 0.38)"
                         filter="url(#dot-led-glow)"
                       />
                       <circle
-                        cx={dotPos.x}
-                        cy={dotPos.y}
+                        ref={dotCoreRef}
+                        cx={currentCircuit.startPoint.x}
+                        cy={currentCircuit.startPoint.y}
                         r="3.5"
                         fill="#FFFFFF"
                         stroke="#22D3EE"
@@ -1460,15 +1475,15 @@ export default function VueltaRapidaPage() {
                         <g
                           key={fb.key}
                           transform={`translate(${fb.x}, ${fb.y - 28})`}
-                          className=" pointer-events-none"
+                          className="pointer-events-none"
                         >
                           <rect
-                            x="-68"
+                            x="-72"
                             y="-22"
-                            width="136"
+                            width="144"
                             height="34"
                             rx="8"
-                            fill="rgba(15, 15, 23, 0.92)"
+                            fill="rgba(15, 15, 23, 0.94)"
                             stroke={colorMap[fb.tier]}
                             strokeWidth="1.8"
                           />
@@ -1502,19 +1517,25 @@ export default function VueltaRapidaPage() {
                   </svg>
                 </div>
 
-                {/* Leyenda de tolerancias de tiempo */}
+                {/* Leyenda de nuevas tolerancias competitivas estrictas */}
                 <div className="mt-3 pt-3 border-t border-white/10 flex flex-wrap items-center justify-center gap-4 text-[11px] font-bold text-[#8E8E93]">
                   <span>
-                    🟣 <strong className="text-purple-300">≤ 0.2s:</strong> +5 pts
+                    🟣 <strong className="text-purple-300">≤ 0.08s (80ms):</strong>{" "}
+                    +5 pts
                   </span>
                   <span>
-                    🟢 <strong className="text-emerald-300">≤ 0.5s:</strong> +3 pts
+                    🟢 <strong className="text-emerald-300">≤ 0.2s (200ms):</strong>{" "}
+                    +3 pts
                   </span>
                   <span>
-                    🟡 <strong className="text-amber-300">≤ 1.0s:</strong> +1 pt
+                    🟡 <strong className="text-amber-300">≤ 0.4s (400ms):</strong>{" "}
+                    +1 pt
                   </span>
                   <span>
-                    🔴 <strong className="text-red-300">&gt; 1.0s / Pasado:</strong>{" "}
+                    🔴{" "}
+                    <strong className="text-red-300">
+                      &gt; 0.4s / No presionar:
+                    </strong>{" "}
                     0 pts
                   </span>
                 </div>
@@ -1522,11 +1543,19 @@ export default function VueltaRapidaPage() {
 
               {/* Botón Grande, Destacado y Centrado: "¡ARRANCAR!" / "¡DOBLAR!" */}
               <div className="flex justify-center pt-1">
-                {gameState === "idle" ? (
+                {!hasStarted ? (
                   <button
                     type="button"
-                    onClick={handleStartLap}
-                    className="w-full max-w-md py-5 sm:py-6 px-8 rounded-3xl bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 active:scale-[0.98] text-white font-black text-xl sm:text-2xl uppercase tracking-widest shadow-[0_0_35px_rgba(6,182,212,0.45)] border border-cyan-300/40 flex items-center justify-center gap-3 transition-all cursor-pointer"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      handleStartLap();
+                    }}
+                    onClick={(e) => {
+                      if (e.detail === 0) {
+                        handleStartLap();
+                      }
+                    }}
+                    className="w-full max-w-md py-5 sm:py-6 px-8 rounded-3xl bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 active:scale-[0.98] text-white font-black text-xl sm:text-2xl uppercase tracking-widest shadow-[0_0_35px_rgba(6,182,212,0.45)] border border-cyan-300/40 flex items-center justify-center gap-3 transition-transform cursor-pointer select-none touch-manipulation"
                   >
                     <Play className="w-6 h-6 fill-current" />
                     <span>¡ARRANCAR!</span>
@@ -1539,7 +1568,6 @@ export default function VueltaRapidaPage() {
                       handleTurnAction();
                     }}
                     onClick={(e) => {
-                      // Soporte para teclado (Enter / Space) donde detail === 0
                       if (e.detail === 0) {
                         handleTurnAction();
                       }
