@@ -53,8 +53,16 @@ export const Premios: React.FC = () => {
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          if (data && data.badges_progress) {
-            setLiveBadgesProgress(data.badges_progress as Record<string, number>);
+          if (data) {
+            const rawProgress = (data.badges_progress || {}) as Record<string, number>;
+            const perfectLaps =
+              typeof data.vueltasPerfectas === "number"
+                ? data.vueltasPerfectas
+                : rawProgress.vueltas_perfectas ?? 0;
+            setLiveBadgesProgress({
+              ...rawProgress,
+              vueltas_perfectas: Math.max(rawProgress.vueltas_perfectas ?? 0, perfectLaps),
+            });
           }
         }
       },
@@ -71,8 +79,16 @@ export const Premios: React.FC = () => {
     if (liveBadgesProgress) {
       return liveBadgesProgress;
     }
-    return profile?.badges_progress || {};
-  }, [liveBadgesProgress, profile?.badges_progress]);
+    const base = profile?.badges_progress || {};
+    const perfectLaps =
+      typeof profile?.vueltasPerfectas === "number"
+        ? profile.vueltasPerfectas
+        : base.vueltas_perfectas ?? 0;
+    return {
+      ...base,
+      vueltas_perfectas: Math.max(base.vueltas_perfectas ?? 0, perfectLaps),
+    };
+  }, [liveBadgesProgress, profile?.badges_progress, profile?.vueltasPerfectas]);
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
@@ -261,7 +277,7 @@ export const Premios: React.FC = () => {
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
           {(
             [
-              { id: "todos", label: "Todos (15)" },
+              { id: "todos", label: `Todos (${BADGES_DATA.length})` },
               { id: "desbloqueados", label: "Desbloqueados" },
               { id: "oro", label: "Oro" },
               { id: "plata", label: "Plata" },

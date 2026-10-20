@@ -705,6 +705,64 @@ function renderBadgeEmblem(
         </g>
       );
 
+    // 16. Vuelta Perfecta (40/40): Cronómetro Violeta de Vuelta Rápida + 40 PTS
+    case "vueltasperfectas":
+    case "vueltaperfecta":
+      return (
+        <g transform="translate(70, 66)">
+          {/* Halo de sector violeta F1 */}
+          <circle
+            cx="0"
+            cy="0"
+            r="14.5"
+            fill="#1A1028"
+            stroke={isZero ? accent : "#C084FC"}
+            strokeWidth="1.5"
+          />
+          {/* Arco de telemetría cian */}
+          <path
+            d="M-10 -6 A 11.5 11.5 0 0 1 10 -6"
+            fill="none"
+            stroke={isZero ? accent : "#22D3EE"}
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+          {/* Aguja de tacómetro apuntando al límite */}
+          <line
+            x1="0"
+            y1="-1"
+            x2="6.5"
+            y2="-7.5"
+            stroke={isZero ? accent : "#E879F9"}
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+          <circle cx="0" cy="-1" r="2" fill={accent} />
+          {/* Placa 40/40 */}
+          <rect
+            x="-12"
+            y="3"
+            width="24"
+            height="8"
+            rx="2"
+            fill={isZero ? "#1E1E2A" : "#581C87"}
+            stroke={accent}
+            strokeWidth="0.9"
+          />
+          <text
+            x="0"
+            y="8.8"
+            textAnchor="middle"
+            fontSize="5.2"
+            fontWeight="900"
+            fill="#FFFFFF"
+            fontFamily="monospace"
+          >
+            40/40
+          </text>
+        </g>
+      );
+
     default:
       return (
         <g transform="translate(70, 66)">

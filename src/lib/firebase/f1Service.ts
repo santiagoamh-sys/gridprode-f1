@@ -255,6 +255,73 @@ export async function getAllPredicciones(): Promise<Prediccion[]> {
   }
 }
 
+export interface VueltaRapidaWinner {
+  userId: string;
+  nombre: string;
+  puntajeTotal: number;
+  tiempoReaccionTotal: number;
+  gpId: string;
+}
+
+/**
+ * Obtiene el único ganador de la Vuelta Rápida semanal para un Gran Premio o Semana (`gpId`),
+ * ordenando por mayor `puntajeTotal` y desempatando por menor `tiempoReaccionTotal` (ms).
+ */
+export async function getGanadorVueltaRapidaSemanal(
+  gpId: string
+): Promise<VueltaRapidaWinner | null> {
+  if (!db || !gpId) return null;
+  try {
+    const colRef = collection(
+      db,
+      "vuelta_rapida_semanal",
+      gpId,
+      "participantes"
+    );
+    const snap = await getDocs(colRef);
+    if (snap.empty) return null;
+
+    const entries: VueltaRapidaWinner[] = [];
+    snap.forEach((docSnap) => {
+      const data = docSnap.data();
+      const puntajeTotal =
+        typeof data.puntajeTotal === "number"
+          ? data.puntajeTotal
+          : typeof data.puntaje === "number"
+          ? data.puntaje
+          : 0;
+      const tiempoReaccionTotal =
+        typeof data.tiempoReaccionTotal === "number"
+          ? data.tiempoReaccionTotal
+          : 999999;
+
+      if (puntajeTotal > 0) {
+        entries.push({
+          userId: data.userId || docSnap.id,
+          nombre: data.nombre || "Piloto GridProde",
+          puntajeTotal,
+          tiempoReaccionTotal,
+          gpId,
+        });
+      }
+    });
+
+    if (entries.length === 0) return null;
+
+    entries.sort((a, b) => {
+      if (b.puntajeTotal !== a.puntajeTotal) {
+        return b.puntajeTotal - a.puntajeTotal;
+      }
+      return a.tiempoReaccionTotal - b.tiempoReaccionTotal;
+    });
+
+    return entries[0];
+  } catch (err) {
+    console.warn("No se pudo obtener el ganador de la Vuelta Rápida semanal:", err);
+    return null;
+  }
+}
+
 /**
  * Obtiene todos los perfiles de usuario registrados para el Leaderboard / Ranking
  */
@@ -276,8 +343,9 @@ export async function getAllUsuariosRanking(): Promise<UserProfile[]> {
  * Guarda los Resultados Oficiales de un Grand Prix y ejecuta el Motor de Puntajes:
  * 1. Actualiza `grand_prix/{grandPrixId}` con `resultados_oficiales` y `estado: "finalizado"`.
  * 2. Cruza los resultados con todas las predicciones de ese GP en `predicciones`.
- * 3. Actualiza `puntos_totales` y `desglose_puntos` en cada predicción evaluada.
- * 4. Recalcula y actualiza el `puntaje_global` de cada usuario en la colección `users`.
+ * 3. Otorga +1 punto extra al único ganador de la Vuelta Rápida semanal de ese GP.
+ * 4. Actualiza `puntos_totales` y `desglose_puntos` en cada predicción evaluada.
+ * 5. Recalcula y actualiza el `puntaje_global` de cada usuario en la colección `users`.
  */
 export async function guardarResultadosYCalcularPuntajes(
   gp: GrandPrix,
@@ -308,8 +376,11 @@ export async function guardarResultadosYCalcularPuntajes(
     { merge: true }
   );
 
-  // 2. Obtener todas las predicciones del sistema para calcular el GP actual y el acumulado global
-  const allPredsSnap = await getDocs(collection(db, "predicciones"));
+  // 2. Obtener todas las predicciones y el ganador de la Vuelta Rápida de este GP
+  const [allPredsSnap, vrWinner] = await Promise.all([
+    getDocs(collection(db, "predicciones")),
+    getGanadorVueltaRapidaSemanal(gp.id),
+  ]);
   const allPreds = allPredsSnap.docs.map((d) => d.data() as Prediccion);
 
   const batch = writeBatch(db);
@@ -328,16 +399,25 @@ export async function guardarResultadosYCalcularPuntajes(
         resultados,
         gp.isSprint
       );
-      puntosDeEstaPred = calc.puntos_totales;
+      const isVrWinner = vrWinner !== null && vrWinner.userId === pred.usuario_id;
+      const bonusVr = isVrWinner ? 1 : 0;
+      const puntosConBonus = calc.puntos_totales + bonusVr;
+      const desgloseConBonus = {
+        ...calc.desglose_puntos,
+        especiales_total: calc.desglose_puntos.especiales_total + bonusVr,
+      };
+
+      puntosDeEstaPred = puntosConBonus;
       prediccionesEvaluadas += 1;
-      puntosGpPorUsuario.set(pred.usuario_id, calc.puntos_totales);
+      puntosGpPorUsuario.set(pred.usuario_id, puntosConBonus);
 
       const predRef = doc(db, "predicciones", pred.id);
       batch.set(
         predRef,
         {
-          puntos_totales: calc.puntos_totales,
-          desglose_puntos: calc.desglose_puntos,
+          puntos_totales: puntosConBonus,
+          desglose_puntos: desgloseConBonus,
+          bonus_vuelta_rapida: bonusVr,
           calculadoAt: serverTimestamp(),
         },
         { merge: true }

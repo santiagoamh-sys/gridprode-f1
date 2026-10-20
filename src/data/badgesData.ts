@@ -153,6 +153,14 @@ export const BADGES_DATA: BadgeDefinition[] = [
     icono: "Zap",
     umbrales: { bronce: 1, plata: 2, oro: 4 },
   },
+  {
+    id: "vueltas_perfectas",
+    nombre: "Vuelta Perfecta (40/40)",
+    descripcion: "Lograr el puntaje perfecto de 40 puntos (8/8 APEX en sector Violeta) en el minijuego de Vuelta Rápida.",
+    categoria: "Especial",
+    icono: "Sparkles",
+    umbrales: { bronce: 1, plata: 5, oro: 10 },
+  },
 ];
 
 /**

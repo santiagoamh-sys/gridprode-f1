@@ -147,6 +147,7 @@ export interface Prediccion {
   grand_prix_id: string;
   respuestas: RespuestasPrediccion;
   puntos_totales?: number;
+  bonus_vuelta_rapida?: number;
   desglose_puntos?: DesglosePuntos | Record<string, number>;
   calculadoAt?: any;
   createdAt?: any;

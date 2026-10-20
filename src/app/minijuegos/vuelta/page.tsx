@@ -14,27 +14,34 @@ import { db } from "@/lib/firebase/config";
 import { useAuth } from "@/context/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Navbar } from "@/components/Navbar";
+import { ThemedTrophy } from "@/components/ThemedTrophy";
+import { BadgeTier } from "@/data/badgesData";
 import {
   ArrowLeft,
+  Award,
   Flag,
   Flame,
   Gamepad2,
   Gauge,
   Loader2,
   Lock,
+  Medal,
   Play,
   RotateCcw,
   Sparkles,
   Timer,
   Trophy,
+  X,
   Zap,
 } from "lucide-react";
 
 import { currentCircuit, type CircuitApexConfig } from "@/data/circuits";
 
 const LAP_DURATION_MS = 10000; // 10.0 segundos exactos para la vuelta completa
-const MAX_DAILY_ATTEMPTS = 3;
+const MAX_WEEKLY_ATTEMPTS = 5; // 5 intentos en total por semana (Lunes a Jueves)
 const MAX_POSSIBLE_POINTS = 40; // 8 curvas * 5 pts
+const MISS_PENALTY_MS = 1000; // Penalización en ms para curvas no presionadas o pasadas de largo
+const SEMANA_GP_ID = currentCircuit.gpId; // Ej: "gp-usa-2026"
 
 // Dificultad Extrema (Hitbox milimétrica en segundos)
 const TOLERANCE_VIOLETA_S = 0.025; // <= 25ms -> +5 pts
@@ -56,13 +63,70 @@ interface FloatingFeedback {
 interface LeaderboardEntry {
   userId: string;
   nombre: string;
-  puntaje: number;
+  puntajeTotal: number;
+  tiempoReaccionTotal: number;
   fecha?: string;
 }
 
 interface TelemetryWaypoint {
   timeMs: number;
   progress: number;
+}
+
+interface UnlockedMedalAlert {
+  tier: "bronce" | "plata" | "oro";
+  title: string;
+  subtitle: string;
+  vueltasPerfectas: number;
+}
+
+const PERFECT_MEDAL_TIERS: Array<{
+  tier: "bronce" | "plata" | "oro";
+  label: string;
+  threshold: number;
+  reqText: string;
+  borderClass: string;
+  bgClass: string;
+  textClass: string;
+  glowClass: string;
+}> = [
+  {
+    tier: "bronce",
+    label: "Bronce",
+    threshold: 1,
+    reqText: "1 Vuelta Perfecta (40 pts)",
+    borderClass: "border-[#cd7f32]/50",
+    bgClass: "from-[#cd7f32]/20 via-[#181822]/90 to-[#12121A]/95",
+    textClass: "text-[#cd7f32]",
+    glowClass: "shadow-[0_0_25px_rgba(205,127,50,0.25)]",
+  },
+  {
+    tier: "plata",
+    label: "Plata",
+    threshold: 5,
+    reqText: "5 Vueltas Perfectas (40 pts)",
+    borderClass: "border-[#c0c0c0]/50",
+    bgClass: "from-[#c0c0c0]/20 via-[#181822]/90 to-[#12121A]/95",
+    textClass: "text-[#e2e8f0]",
+    glowClass: "shadow-[0_0_25px_rgba(192,192,192,0.28)]",
+  },
+  {
+    tier: "oro",
+    label: "Oro",
+    threshold: 10,
+    reqText: "10 Vueltas Perfectas (40 pts)",
+    borderClass: "border-[#ffd700]/60",
+    bgClass: "from-[#ffd700]/25 via-[#181822]/90 to-[#12121A]/95",
+    textClass: "text-[#ffd700]",
+    glowClass: "shadow-[0_0_30px_rgba(255,215,0,0.35)]",
+  },
+];
+
+function getPerfectLapMedalTier(count: number): BadgeTier {
+  if (count >= 10) return "oro";
+  if (count >= 5) return "plata";
+  if (count >= 1) return "bronce";
+  return "bloqueado";
 }
 
 /**
@@ -107,38 +171,19 @@ function computeF1VariableProgress(
   return 1;
 }
 
-/**
- * Devuelve la fecha local en formato YYYY-MM-DD
- */
-function getLocalDateFormatted(now: Date = new Date()): string {
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * Devuelve el identificador único de la semana actual (basado en el lunes de esa semana)
- */
-function getCurrentWeekId(now: Date = new Date()): string {
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const day = d.getDay(); // 0 = Domingo, 1 = Lunes, ..., 6 = Sábado
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diffToMonday);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const dayStr = String(d.getDate()).padStart(2, "0");
-  return `${currentCircuit.id}_${year}_${month}_${dayStr}`;
-}
-
 export default function VueltaRapidaPage() {
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading, refreshProfile } = useAuth();
 
-  // Validación de día (Lunes=1 a Jueves=4) e intentos diarios en Firestore
+  // Validación de día (Lunes=1 a Jueves=4) e intentos semanales (máx. 5) en Firestore
   const [checkingAccess, setCheckingAccess] = useState<boolean>(true);
   const [isDayAllowed, setIsDayAllowed] = useState<boolean>(true);
-  const [dailyAttempts, setDailyAttempts] = useState<number>(0);
+  const [weeklyAttempts, setWeeklyAttempts] = useState<number>(0);
   const [weeklyRecord, setWeeklyRecord] = useState<number | null>(null);
+  const [weeklyBestReactionMs, setWeeklyBestReactionMs] = useState<number | null>(null);
+  const [lastLapReactionMs, setLastLapReactionMs] = useState<number>(0);
+  const [vueltasPerfectas, setVueltasPerfectas] = useState<number>(0);
+  const [unlockedMedalAlert, setUnlockedMedalAlert] =
+    useState<UnlockedMedalAlert | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [isSavingLap, setIsSavingLap] = useState<boolean>(false);
 
@@ -175,6 +220,7 @@ export default function VueltaRapidaPage() {
   const isRunningRef = useRef<boolean>(false);
   const hasFinishedLapRef = useRef<boolean>(false);
   const apexResultsRef = useRef<Record<number, HitTier>>({});
+  const apexReactionMsRef = useRef<Record<number, number>>({});
 
   // Callback ref para calibrar la longitud exacta del <path> y cada APEX apenas se monta en el DOM
   const setTrackPathNode = useCallback((node: SVGPathElement | null) => {
@@ -265,10 +311,10 @@ export default function VueltaRapidaPage() {
     return summary;
   }, [apexResults]);
 
-  // Obtener el leaderboard semanal desde Firestore
+  // Obtener el leaderboard semanal desde Firestore ordenado por puntajeTotal DESC y tiempoReaccionTotal ASC
   const fetchWeeklyLeaderboard = useCallback(
     async (
-      semanaId: string,
+      semanaGpId: string,
       fallbackUserEntry?: LeaderboardEntry
     ): Promise<LeaderboardEntry[]> => {
       if (!db) {
@@ -278,18 +324,30 @@ export default function VueltaRapidaPage() {
         const colRef = collection(
           db,
           "vuelta_rapida_semanal",
-          semanaId,
+          semanaGpId,
           "participantes"
         );
         const snap = await getDocs(colRef);
         const entries: LeaderboardEntry[] = [];
         snap.forEach((docSnap) => {
           const data = docSnap.data();
-          if (typeof data.puntaje === "number") {
+          const score =
+            typeof data.puntajeTotal === "number"
+              ? data.puntajeTotal
+              : typeof data.puntaje === "number"
+              ? data.puntaje
+              : null;
+          const reactionMs =
+            typeof data.tiempoReaccionTotal === "number"
+              ? data.tiempoReaccionTotal
+              : 8000;
+
+          if (score !== null) {
             entries.push({
               userId: data.userId || docSnap.id,
               nombre: data.nombre || "Piloto GridProde",
-              puntaje: data.puntaje,
+              puntajeTotal: score,
+              tiempoReaccionTotal: reactionMs,
               fecha: data.fecha,
             });
           }
@@ -300,7 +358,13 @@ export default function VueltaRapidaPage() {
             (e) => e.userId === fallbackUserEntry.userId
           );
           if (idx >= 0) {
-            if (fallbackUserEntry.puntaje > entries[idx].puntaje) {
+            const current = entries[idx];
+            const isBetter =
+              fallbackUserEntry.puntajeTotal > current.puntajeTotal ||
+              (fallbackUserEntry.puntajeTotal === current.puntajeTotal &&
+                fallbackUserEntry.tiempoReaccionTotal <
+                  current.tiempoReaccionTotal);
+            if (isBetter) {
               entries[idx] = fallbackUserEntry;
             }
           } else {
@@ -308,7 +372,13 @@ export default function VueltaRapidaPage() {
           }
         }
 
-        entries.sort((a, b) => b.puntaje - a.puntaje);
+        // Ordenar por mayor puntajeTotal y desempatar por menor tiempoReaccionTotal (ms)
+        entries.sort((a, b) => {
+          if (b.puntajeTotal !== a.puntajeTotal) {
+            return b.puntajeTotal - a.puntajeTotal;
+          }
+          return a.tiempoReaccionTotal - b.tiempoReaccionTotal;
+        });
         return entries;
       } catch (err) {
         console.warn("No se pudo cargar el leaderboard semanal:", err);
@@ -318,7 +388,7 @@ export default function VueltaRapidaPage() {
     []
   );
 
-  // 1. Verificar día de la semana (Lunes a Jueves) e intentos diarios en Firestore
+  // 1. Verificar día de la semana (Lunes a Jueves), intentos semanales (5 máx.) y medallas en Firestore
   useEffect(() => {
     const now = new Date();
     const dayOfWeek = now.getDay(); // 0 = Dom, 1 = Lun, 2 = Mar, 3 = Mié, 4 = Jue, 5 = Vie, 6 = Sáb
@@ -342,21 +412,27 @@ export default function VueltaRapidaPage() {
     const verifyAccessAndRecords = async () => {
       try {
         setCheckingAccess(true);
-        const fechaActual = getLocalDateFormatted(now);
-        const semanaId = getCurrentWeekId(now);
 
         const intentosRef = doc(
           db,
           "users",
           user.uid,
           "intentosVuelta",
-          fechaActual
+          SEMANA_GP_ID
         );
-        const recordRef = doc(db, "users", user.uid, "recordsVuelta", semanaId);
+        const recordRef = doc(
+          db,
+          "users",
+          user.uid,
+          "recordsVuelta",
+          SEMANA_GP_ID
+        );
+        const userRef = doc(db, "users", user.uid);
 
-        const [intentosSnap, recordSnap] = await Promise.all([
+        const [intentosSnap, recordSnap, userSnap] = await Promise.all([
           getDoc(intentosRef),
           getDoc(recordRef),
+          getDoc(userRef),
         ]);
 
         if (!isMounted) return;
@@ -366,15 +442,45 @@ export default function VueltaRapidaPage() {
             ? intentosSnap.data().contador
             : 0
           : 0;
-        setDailyAttempts(currentCount);
+        setWeeklyAttempts(currentCount);
 
-        let userBest: number | null = null;
-        if (
-          recordSnap.exists() &&
-          typeof recordSnap.data().puntaje === "number"
-        ) {
-          userBest = recordSnap.data().puntaje;
-          setWeeklyRecord(userBest);
+        // Cargar contador histórico de Vueltas Perfectas (40/40)
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          const perfectCount =
+            typeof userData.vueltasPerfectas === "number"
+              ? userData.vueltasPerfectas
+              : typeof userData.badges_progress?.vueltas_perfectas === "number"
+              ? userData.badges_progress.vueltas_perfectas
+              : 0;
+          setVueltasPerfectas(perfectCount);
+        } else if (typeof profile?.vueltasPerfectas === "number") {
+          setVueltasPerfectas(profile.vueltasPerfectas);
+        }
+
+        let userBestScore: number | null = null;
+        let userBestMs: number | null = null;
+        if (recordSnap.exists()) {
+          const rData = recordSnap.data();
+          const scoreVal =
+            typeof rData.puntajeTotal === "number"
+              ? rData.puntajeTotal
+              : typeof rData.puntaje === "number"
+              ? rData.puntaje
+              : null;
+          const msVal =
+            typeof rData.tiempoReaccionTotal === "number"
+              ? rData.tiempoReaccionTotal
+              : null;
+
+          if (scoreVal !== null) {
+            userBestScore = scoreVal;
+            setWeeklyRecord(scoreVal);
+          }
+          if (msVal !== null) {
+            userBestMs = msVal;
+            setWeeklyBestReactionMs(msVal);
+          }
         }
 
         const displayName =
@@ -384,12 +490,13 @@ export default function VueltaRapidaPage() {
           "Piloto";
 
         const board = await fetchWeeklyLeaderboard(
-          semanaId,
-          userBest !== null
+          SEMANA_GP_ID,
+          userBestScore !== null
             ? {
                 userId: user.uid,
                 nombre: displayName,
-                puntaje: userBest,
+                puntajeTotal: userBestScore,
+                tiempoReaccionTotal: userBestMs ?? 8000,
               }
             : undefined
         );
@@ -399,7 +506,7 @@ export default function VueltaRapidaPage() {
         }
       } catch (error) {
         console.error(
-          "Error al verificar intentos diarios de Vuelta Rápida:",
+          "Error al verificar intentos semanales de Vuelta Rápida:",
           error
         );
       } finally {
@@ -419,6 +526,7 @@ export default function VueltaRapidaPage() {
     user?.displayName,
     user?.email,
     profile?.nombre,
+    profile?.vueltasPerfectas,
     authLoading,
     fetchWeeklyLeaderboard,
   ]);
@@ -452,13 +560,22 @@ export default function VueltaRapidaPage() {
     []
   );
 
-  // Registrar resultado de un APEX de forma sincrónica y en estado React
+  // Registrar resultado y milisegundos de reacción de un APEX de forma sincrónica y en estado React
   const recordApexOutcome = useCallback(
-    (apex: CircuitApexConfig, tier: HitTier, subtext?: string) => {
+    (
+      apex: CircuitApexConfig,
+      tier: HitTier,
+      reactionMs: number,
+      subtext?: string
+    ) => {
       if (apexResultsRef.current[apex.id]) return;
       apexResultsRef.current = {
         ...apexResultsRef.current,
         [apex.id]: tier,
+      };
+      apexReactionMsRef.current = {
+        ...apexReactionMsRef.current,
+        [apex.id]: Math.max(0, Math.round(reactionMs)),
       };
       setApexResults({ ...apexResultsRef.current });
       spawnFloatingFeedback(apex, tier, subtext);
@@ -466,7 +583,7 @@ export default function VueltaRapidaPage() {
     [spawnFloatingFeedback]
   );
 
-  // Finalizar vuelta y guardar intento + récord semanal en Firestore
+  // Finalizar vuelta y guardar intento semanal + récord con desempate en ms + medallas 40/40 en Firestore
   const handleFinishLap = useCallback(async () => {
     if (hasFinishedLapRef.current) return;
     hasFinishedLapRef.current = true;
@@ -477,39 +594,99 @@ export default function VueltaRapidaPage() {
       rafIdRef.current = null;
     }
 
-    // Cualquier APEX no presionado al concluir la vuelta queda como ROJO (0 pts)
+    // Cualquier APEX no presionado al concluir la vuelta queda como ROJO (0 pts) y MISS_PENALTY_MS
     const finalMap: Record<number, HitTier> = { ...apexResultsRef.current };
+    const finalReactionMap: Record<number, number> = {
+      ...apexReactionMsRef.current,
+    };
+
     currentCircuit.apexes.forEach((ap) => {
       if (!finalMap[ap.id]) {
         finalMap[ap.id] = "rojo";
       }
+      if (typeof finalReactionMap[ap.id] !== "number") {
+        finalReactionMap[ap.id] = MISS_PENALTY_MS;
+      }
     });
     apexResultsRef.current = finalMap;
+    apexReactionMsRef.current = finalReactionMap;
     setApexResults(finalMap);
 
-    let finalScore = 0;
+    let puntajeTotal = 0;
     Object.values(finalMap).forEach((tier) => {
-      if (tier === "violeta") finalScore += 5;
-      else if (tier === "verde") finalScore += 3;
-      else if (tier === "amarillo") finalScore += 1;
+      if (tier === "violeta") puntajeTotal += 5;
+      else if (tier === "verde") puntajeTotal += 3;
+      else if (tier === "amarillo") puntajeTotal += 1;
     });
 
-    const nextAttempts = dailyAttempts + 1;
-    setDailyAttempts(nextAttempts);
+    const tiempoReaccionTotal = currentCircuit.apexes.reduce(
+      (acc, ap) => acc + (finalReactionMap[ap.id] ?? MISS_PENALTY_MS),
+      0
+    );
+    setLastLapReactionMs(tiempoReaccionTotal);
 
-    const prevBest = weeklyRecord;
-    const achievedNewBest = prevBest === null || finalScore > prevBest;
-    const bestScoreToKeep =
-      prevBest === null ? finalScore : Math.max(prevBest, finalScore);
+    const nextAttempts = weeklyAttempts + 1;
+    setWeeklyAttempts(nextAttempts);
+
+    // Solo actualizar el récord semanal si el nuevo puntajeTotal es mayor,
+    // O si el puntajeTotal es igual y el nuevo tiempoReaccionTotal es menor (más rápido)
+    const prevBestScore = weeklyRecord;
+    const prevBestMs = weeklyBestReactionMs;
+    const achievedNewBest =
+      prevBestScore === null ||
+      puntajeTotal > prevBestScore ||
+      (puntajeTotal === prevBestScore &&
+        (prevBestMs === null || tiempoReaccionTotal < prevBestMs));
+
+    const bestScoreToKeep = achievedNewBest
+      ? puntajeTotal
+      : prevBestScore ?? puntajeTotal;
+    const bestMsToKeep = achievedNewBest
+      ? tiempoReaccionTotal
+      : prevBestMs ?? tiempoReaccionTotal;
 
     setWeeklyRecord(bestScoreToKeep);
+    setWeeklyBestReactionMs(bestMsToKeep);
     setIsNewWeeklyBest(achievedNewBest);
+
+    // Verificar si clavó Puntaje Perfecto Histórico (40 / 40 puntos)
+    const isPerfectLap = puntajeTotal === MAX_POSSIBLE_POINTS;
+    let nextPerfectCount = vueltasPerfectas;
+    if (isPerfectLap) {
+      nextPerfectCount = vueltasPerfectas + 1;
+      setVueltasPerfectas(nextPerfectCount);
+
+      if (nextPerfectCount === 1) {
+        setUnlockedMedalAlert({
+          tier: "bronce",
+          title: "¡Medalla de Bronce Desbloqueada!",
+          subtitle:
+            "Conseguiste tu primera Vuelta Perfecta histórica (40/40 puntos) clavando los 8 sectores en violeta.",
+          vueltasPerfectas: nextPerfectCount,
+        });
+      } else if (nextPerfectCount === 5) {
+        setUnlockedMedalAlert({
+          tier: "plata",
+          title: "¡Medalla de Plata Desbloqueada!",
+          subtitle:
+            "Alcanzaste 5 Vueltas Perfectas históricas (40/40 puntos). Precisión de ingeniero de telemetría.",
+          vueltasPerfectas: nextPerfectCount,
+        });
+      } else if (nextPerfectCount === 10) {
+        setUnlockedMedalAlert({
+          tier: "oro",
+          title: "¡Medalla de Oro Desbloqueada!",
+          subtitle:
+            "¡Hazaña legendaria! Lograste 10 Vueltas Perfectas históricas (40/40 puntos) en GridProde F1.",
+          vueltasPerfectas: nextPerfectCount,
+        });
+      }
+    }
+
     setIsFinished(true);
     setIsSavingLap(true);
 
     const now = new Date();
-    const fechaActual = getLocalDateFormatted(now);
-    const semanaId = getCurrentWeekId(now);
     const displayName =
       profile?.nombre ||
       user?.displayName ||
@@ -518,35 +695,38 @@ export default function VueltaRapidaPage() {
 
     try {
       if (db && user?.uid) {
+        // 1. Guardar contador de intentos de la semana (máx. 5)
         const intentosRef = doc(
           db,
           "users",
           user.uid,
           "intentosVuelta",
-          fechaActual
+          SEMANA_GP_ID
         );
         await setDoc(
           intentosRef,
           {
             contador: nextAttempts,
-            fecha: fechaActual,
+            semanaId: SEMANA_GP_ID,
+            circuitoId: currentCircuit.id,
             updatedAt: serverTimestamp(),
           },
           { merge: true }
         );
 
+        // 2. Si superó su marca semanal (o empató en puntos con menor tiempoReaccionTotal), actualizar récord
         if (achievedNewBest) {
           const userRecordRef = doc(
             db,
             "users",
             user.uid,
             "recordsVuelta",
-            semanaId
+            SEMANA_GP_ID
           );
           const leaderboardParticipantRef = doc(
             db,
             "vuelta_rapida_semanal",
-            semanaId,
+            SEMANA_GP_ID,
             "participantes",
             user.uid
           );
@@ -554,9 +734,11 @@ export default function VueltaRapidaPage() {
           const recordPayload = {
             userId: user.uid,
             nombre: displayName,
-            puntaje: finalScore,
+            puntajeTotal,
+            puntaje: puntajeTotal,
+            tiempoReaccionTotal,
             circuitoId: currentCircuit.id,
-            semanaId,
+            semanaId: SEMANA_GP_ID,
             fecha: now.toISOString(),
             updatedAt: serverTimestamp(),
           };
@@ -567,29 +749,53 @@ export default function VueltaRapidaPage() {
           ]);
         }
 
-        const updatedBoard = await fetchWeeklyLeaderboard(semanaId, {
+        // 3. Si logró puntaje perfecto (40 pts), incrementar vueltasPerfectas en users/{userId}
+        if (isPerfectLap) {
+          const userDocRef = doc(db, "users", user.uid);
+          const currentBadges = profile?.badges_progress || {};
+          await setDoc(
+            userDocRef,
+            {
+              vueltasPerfectas: nextPerfectCount,
+              badges_progress: {
+                ...currentBadges,
+                vueltas_perfectas: nextPerfectCount,
+              },
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+          await refreshProfile();
+        }
+
+        const updatedBoard = await fetchWeeklyLeaderboard(SEMANA_GP_ID, {
           userId: user.uid,
           nombre: displayName,
-          puntaje: bestScoreToKeep,
+          puntajeTotal: bestScoreToKeep,
+          tiempoReaccionTotal: bestMsToKeep,
           fecha: now.toISOString(),
         });
         setLeaderboard(updatedBoard);
       }
     } catch (error) {
       console.error(
-        "Error al guardar intento y récord semanal en Firestore:",
+        "Error al guardar intento semanal y récord en Firestore:",
         error
       );
     } finally {
       setIsSavingLap(false);
     }
   }, [
-    dailyAttempts,
+    weeklyAttempts,
     weeklyRecord,
+    weeklyBestReactionMs,
+    vueltasPerfectas,
     profile?.nombre,
+    profile?.badges_progress,
     user?.uid,
     user?.displayName,
     user?.email,
+    refreshProfile,
     fetchWeeklyLeaderboard,
   ]);
 
@@ -654,7 +860,12 @@ export default function VueltaRapidaPage() {
         const ap = apexes[i];
         if (!apexResultsRef.current[ap.id]) {
           if (clampedElapsed > ap.idealTimeMs + missToleranceMs) {
-            recordApexOutcomeRef.current(ap, "rojo", "NO PRESIONADO");
+            recordApexOutcomeRef.current(
+              ap,
+              "rojo",
+              MISS_PENALTY_MS,
+              "NO PRESIONADO"
+            );
           }
         }
       }
@@ -683,9 +894,10 @@ export default function VueltaRapidaPage() {
 
   // Acción "¡ARRANCAR!" con respuesta instantánea (0ms delay)
   const handleStartLap = useCallback(() => {
-    if (dailyAttempts >= MAX_DAILY_ATTEMPTS || isRunningRef.current) return;
+    if (weeklyAttempts >= MAX_WEEKLY_ATTEMPTS || isRunningRef.current) return;
 
     apexResultsRef.current = {};
+    apexReactionMsRef.current = {};
     setApexResults({});
     setFloatingFeedbacks([]);
     setIsNewWeeklyBest(false);
@@ -698,7 +910,7 @@ export default function VueltaRapidaPage() {
     );
 
     startImmediateLoop();
-  }, [dailyAttempts, setDotDomPosition, startImmediateLoop]);
+  }, [weeklyAttempts, setDotDomPosition, startImmediateLoop]);
 
   // Acción "¡DOBLAR!" con Dificultad Extrema (Hitbox milimétrica: 25ms / 50ms / 100ms)
   const handleTurnAction = useCallback(() => {
@@ -727,37 +939,39 @@ export default function VueltaRapidaPage() {
       }
     }
 
-    // Si algún APEX anterior quedó sin evaluar, marcarlo como ROJO (0 pts)
+    // Si algún APEX anterior quedó sin evaluar, marcarlo como ROJO (0 pts) y MISS_PENALTY_MS
     for (const ap of pendingApexes) {
       if (ap.id < closestApex.id) {
-        recordApexOutcome(ap, "rojo", "PASADO DE LARGO");
+        recordApexOutcome(ap, "rojo", MISS_PENALTY_MS, "PASADO DE LARGO");
       }
     }
 
+    const roundedDiffMs = Math.max(0, Math.round(minDiffMs));
     const diffSeconds = minDiffMs / 1000;
-    const deltaMsText = `${Math.round(minDiffMs)}ms`;
+    const deltaMsText = `${roundedDiffMs}ms`;
 
     if (diffSeconds <= TOLERANCE_VIOLETA_S) {
       // <= 0.025s (25ms): VIOLETA 🟣 (+5 pts)
-      recordApexOutcome(closestApex, "violeta", `Δ ${deltaMsText}`);
+      recordApexOutcome(closestApex, "violeta", roundedDiffMs, `Δ ${deltaMsText}`);
     } else if (diffSeconds <= TOLERANCE_VERDE_S) {
       // <= 0.05s (50ms): VERDE 🟢 (+3 pts)
-      recordApexOutcome(closestApex, "verde", `Δ ${deltaMsText}`);
+      recordApexOutcome(closestApex, "verde", roundedDiffMs, `Δ ${deltaMsText}`);
     } else if (diffSeconds <= TOLERANCE_AMARILLO_S) {
       // <= 0.1s (100ms): AMARILLO 🟡 (+1 pt)
-      recordApexOutcome(closestApex, "amarillo", `Δ ${deltaMsText}`);
+      recordApexOutcome(closestApex, "amarillo", roundedDiffMs, `Δ ${deltaMsText}`);
     } else {
       // > 0.1s (100ms): ROJO 🔴 (0 pts)
-      recordApexOutcome(closestApex, "rojo", `Δ ${deltaMsText}`);
+      recordApexOutcome(closestApex, "rojo", roundedDiffMs, `Δ ${deltaMsText}`);
     }
   }, [recordApexOutcome]);
 
-  // Reiniciar para otro intento (si le quedan intentos del día)
+  // Reiniciar para otro intento (si le quedan intentos de la semana)
   const handleResetToIdle = useCallback(() => {
-    if (dailyAttempts >= MAX_DAILY_ATTEMPTS) return;
+    if (weeklyAttempts >= MAX_WEEKLY_ATTEMPTS) return;
     isRunningRef.current = false;
     hasFinishedLapRef.current = false;
     apexResultsRef.current = {};
+    apexReactionMsRef.current = {};
     setApexResults({});
     setFloatingFeedbacks([]);
     setHasStarted(false);
@@ -769,7 +983,7 @@ export default function VueltaRapidaPage() {
     if (timerDisplayRef.current) {
       timerDisplayRef.current.textContent = "0.00s / 10.00s";
     }
-  }, [dailyAttempts, setDotDomPosition]);
+  }, [weeklyAttempts, setDotDomPosition]);
 
   // Próximo APEX pendiente para resaltarlo en pista
   const nextPendingApex = React.useMemo(() => {
@@ -777,7 +991,8 @@ export default function VueltaRapidaPage() {
   }, [apexResults]);
 
   const fastestLapHolder = leaderboard.length > 0 ? leaderboard[0] : null;
-  const attemptsRemaining = Math.max(0, MAX_DAILY_ATTEMPTS - dailyAttempts);
+  const attemptsRemaining = Math.max(0, MAX_WEEKLY_ATTEMPTS - weeklyAttempts);
+  const currentPerfectMedalTier = getPerfectLapMedalTier(vueltasPerfectas);
 
   return (
     <ProtectedRoute>
@@ -785,7 +1000,7 @@ export default function VueltaRapidaPage() {
         <Navbar />
 
         <main className="flex-1 max-w-5xl w-full mx-auto px-2 sm:px-6 lg:px-8 py-3 sm:py-6 space-y-3 sm:space-y-5">
-          {/* Barra superior de retorno + Indicador de Intentos Diarios */}
+          {/* Barra superior de retorno + Indicador de Intentos de la Semana (X / 5) */}
           <div className="flex flex-wrap items-center justify-between gap-2 px-1">
             <Link
               href="/minijuegos"
@@ -796,7 +1011,7 @@ export default function VueltaRapidaPage() {
             </Link>
 
             {!checkingAccess && isDayAllowed && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {weeklyRecord !== null && (
                   <div className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1F1F27]/80 border border-purple-500/30 text-xs font-bold text-purple-300">
                     <Trophy className="w-3.5 h-3.5 text-purple-400" />
@@ -805,6 +1020,11 @@ export default function VueltaRapidaPage() {
                       <strong className="text-white font-mono">
                         {weeklyRecord} pts
                       </strong>
+                      {weeklyBestReactionMs !== null && (
+                        <span className="ml-1 text-[11px] text-cyan-300 font-mono">
+                          ({weeklyBestReactionMs} ms)
+                        </span>
+                      )}
                     </span>
                   </div>
                 )}
@@ -812,9 +1032,9 @@ export default function VueltaRapidaPage() {
                 <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-cyan-500/15 border border-cyan-400/40 text-xs sm:text-sm font-black text-cyan-300 shadow-[0_0_20px_rgba(6,182,212,0.2)]">
                   <Flame className="w-4 h-4 text-cyan-400" />
                   <span>
-                    Intentos diarios:{" "}
-                    {Math.min(dailyAttempts, MAX_DAILY_ATTEMPTS)} de{" "}
-                    {MAX_DAILY_ATTEMPTS}
+                    Intentos de la semana:{" "}
+                    {Math.min(weeklyAttempts, MAX_WEEKLY_ATTEMPTS)} /{" "}
+                    {MAX_WEEKLY_ATTEMPTS}
                   </span>
                 </div>
               </div>
@@ -834,7 +1054,7 @@ export default function VueltaRapidaPage() {
                   Cargando telemetría del circuito...
                 </h2>
                 <p className="text-xs sm:text-sm text-[#8E8E93]">
-                  Verificando disponibilidad de pista y tus intentos diarios en Firestore.
+                  Verificando disponibilidad de pista y tus intentos de la semana en Firestore.
                 </p>
               </div>
             </div>
@@ -856,7 +1076,8 @@ export default function VueltaRapidaPage() {
                   El circuito está cerrado. La Vuelta Rápida solo se corre de lunes a jueves
                 </h1>
                 <p className="text-xs sm:text-sm text-[#8E8E93] leading-relaxed">
-                  Durante el fin de semana de Gran Premio la actividad se traslada a la pista real. Regresa el lunes para marcar el récord semanal.
+                  Durante el fin de semana de Gran Premio la actividad se traslada a la pista real y el ganador semanal recibe{" "}
+                  <strong className="text-emerald-400">+1 punto extra</strong> en su predicción del GP. Regresa el lunes para competir.
                 </p>
               </div>
 
@@ -870,33 +1091,137 @@ export default function VueltaRapidaPage() {
                 </Link>
               </div>
             </div>
-          ) : dailyAttempts >= MAX_DAILY_ATTEMPTS && !isFinished ? (
+          ) : weeklyAttempts >= MAX_WEEKLY_ATTEMPTS && !isFinished ? (
             /* =============================================================== */
-            /* 3. BLOQUEO POR LÍMITE DE 3 INTENTOS DIARIOS AGOTADOS            */
+            /* 3. BLOQUEO POR LÍMITE DE 5 INTENTOS SEMANALES AGOTADOS          */
             /* =============================================================== */
-            <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-8 sm:p-12 shadow-2xl text-center space-y-7">
-              <div className="w-20 h-20 rounded-3xl bg-cyan-500/15 border border-cyan-400/40 flex items-center justify-center text-cyan-400 mx-auto shadow-[0_0_30px_rgba(6,182,212,0.25)]">
-                <Lock className="w-10 h-10" />
+            <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-6 sm:p-10 shadow-2xl space-y-8">
+              <div className="text-center space-y-4">
+                <div className="w-20 h-20 rounded-3xl bg-cyan-500/15 border border-cyan-400/40 flex items-center justify-center text-cyan-400 mx-auto shadow-[0_0_30px_rgba(6,182,212,0.25)]">
+                  <Lock className="w-10 h-10" />
+                </div>
+
+                <div className="space-y-3 max-w-lg mx-auto">
+                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 text-xs font-black uppercase tracking-wider">
+                    <Timer className="w-3.5 h-3.5" />
+                    <span>
+                      Intentos de la semana: {MAX_WEEKLY_ATTEMPTS} /{" "}
+                      {MAX_WEEKLY_ATTEMPTS}
+                    </span>
+                  </span>
+                  <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">
+                    ¡Ya completaste tus 5 intentos de la semana!
+                  </h1>
+                  <p className="text-xs sm:text-sm text-[#8E8E93] leading-relaxed">
+                    El juego queda bloqueado hasta la próxima semana. El único ganador semanal (mayor puntaje y menor tiempo de reacción en ms) recibirá{" "}
+                    <strong className="text-emerald-400">+1 punto extra</strong> en su predicción del Gran Premio.
+                  </p>
+                  {weeklyRecord !== null && (
+                    <p className="text-sm font-bold text-purple-300 pt-1">
+                      Tu mejor marca semanal:{" "}
+                      <span className="font-mono text-white">
+                        {weeklyRecord} pts
+                      </span>{" "}
+                      / {MAX_POSSIBLE_POINTS} pts
+                      {weeklyBestReactionMs !== null && (
+                        <span className="ml-1.5 font-mono text-cyan-300">
+                          • {weeklyBestReactionMs} ms
+                        </span>
+                      )}
+                    </p>
+                  )}
+                </div>
               </div>
 
-              <div className="space-y-3 max-w-lg mx-auto">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 text-xs font-black uppercase tracking-wider">
-                  <Timer className="w-3.5 h-3.5" />
-                  <span>Intentos diarios: 3 de 3</span>
-                </span>
-                <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">
-                  ¡Ya agotaste tus 3 intentos de hoy! Volvé mañana para mejorar tu marca.
-                </h1>
-                {weeklyRecord !== null && (
-                  <p className="text-sm font-bold text-purple-300 pt-1">
-                    Tu récord de la semana actual:{" "}
-                    <span className="font-mono text-white">{weeklyRecord} pts</span> /{" "}
-                    {MAX_POSSIBLE_POINTS} pts
+              {/* Tabla Semanal con Desempate por Milisegundos */}
+              <div className="max-w-2xl mx-auto rounded-2xl bg-[#15151E]/95 border border-white/10 p-5 sm:p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Trophy className="w-5 h-5 text-purple-400" />
+                    <h2 className="text-sm sm:text-base font-black uppercase tracking-wider text-white">
+                      Tabla Semanal • Desempate por Milisegundos
+                    </h2>
+                  </div>
+                  <span className="text-[11px] font-bold text-purple-300 bg-purple-500/15 border border-purple-500/30 px-2.5 py-0.5 rounded-full">
+                    {currentCircuit.grandPrix}
+                  </span>
+                </div>
+
+                {fastestLapHolder ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-gradient-to-r from-purple-950/70 via-[#1F1F27] to-[#1F1F27] border border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.2)]">
+                      <div className="flex items-center gap-3.5">
+                        <div className="w-10 h-10 rounded-xl bg-purple-500 text-white font-mono font-black text-sm flex items-center justify-center shadow-md shrink-0">
+                          P1
+                        </div>
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-black uppercase tracking-wider text-purple-300">
+                              🟣 Récord de Vuelta Rápida
+                            </span>
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 backdrop-blur-md border border-emerald-400/40 text-emerald-300 text-[10px] font-black uppercase tracking-wider">
+                              <Zap className="w-2.5 h-2.5 text-emerald-400 fill-current" />
+                              +1 pt extra en GP
+                            </span>
+                          </div>
+                          <p className="text-base sm:text-lg font-black text-white mt-0.5">
+                            {fastestLapHolder.nombre}
+                            {fastestLapHolder.userId === user?.uid && (
+                              <span className="ml-2 text-xs font-bold text-cyan-400">
+                                (Tú)
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-left sm:text-right pl-13 sm:pl-0">
+                        <p className="text-xl sm:text-2xl font-black font-mono text-purple-300">
+                          {fastestLapHolder.puntajeTotal} pts
+                        </p>
+                        <p className="text-xs font-mono font-bold text-cyan-300">
+                          ⏱️ {fastestLapHolder.tiempoReaccionTotal} ms
+                        </p>
+                      </div>
+                    </div>
+
+                    {leaderboard.slice(1, 5).map((entry, idx) => (
+                      <div
+                        key={entry.userId}
+                        className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-[#1F1F27]/70 border border-white/5 text-xs sm:text-sm"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono font-black text-[#8E8E93] w-6">
+                            P{idx + 2}
+                          </span>
+                          <span className="font-bold text-white">
+                            {entry.nombre}
+                            {entry.userId === user?.uid && (
+                              <span className="ml-1.5 text-cyan-400 font-bold">
+                                (Tú)
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 font-mono">
+                          <span className="font-black text-[#D0D0D2]">
+                            {entry.puntajeTotal} pts
+                          </span>
+                          <span className="text-xs text-cyan-300 font-bold">
+                            {entry.tiempoReaccionTotal} ms
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[#8E8E93] text-center py-3">
+                    Aún no hay registros semanales cargados.
                   </p>
                 )}
               </div>
 
-              <div className="pt-4 border-t border-white/10 flex justify-center">
+              <div className="pt-2 border-t border-white/10 flex justify-center">
                 <Link
                   href="/minijuegos"
                   className="inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-xs sm:text-sm font-black uppercase tracking-wider text-white shadow-[0_0_25px_rgba(6,182,212,0.35)] transition-all"
@@ -908,7 +1233,7 @@ export default function VueltaRapidaPage() {
             </div>
           ) : isFinished ? (
             /* =============================================================== */
-            /* 4. PANTALLA FINAL DE RESUMEN Y MINI LEADERBOARD SEMANAL         */
+            /* 4. PANTALLA FINAL DE RESUMEN, LEADERBOARD Y MEDALLAS 40/40      */
             /* =============================================================== */
             <div className="rounded-3xl bg-[#1F1F27]/85 backdrop-blur-xl border border-white/10 p-6 sm:p-10 shadow-2xl space-y-8 animate-in fade-in duration-300">
               <div className="text-center space-y-3">
@@ -919,7 +1244,9 @@ export default function VueltaRapidaPage() {
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/15 border border-purple-400/30 text-purple-300 text-xs font-black uppercase tracking-wider">
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>
-                    {isNewWeeklyBest
+                    {counts.totalPoints === MAX_POSSIBLE_POINTS
+                      ? "¡VUELTA PERFECTA HISTÓRICA (40/40 PTS)!"
+                      : isNewWeeklyBest
                       ? "¡Nuevo Récord Personal de la Semana!"
                       : "Bandera a Cuadros • Vuelta Completada"}
                   </span>
@@ -930,17 +1257,27 @@ export default function VueltaRapidaPage() {
                 </h1>
               </div>
 
-              {/* Tarjetas de Puntaje de la Vuelta y Récord de la Semana */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
+              {/* Tarjetas de Puntaje de la Vuelta, Tiempo de Reacción y Récord de la Semana */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto">
                 <div className="rounded-2xl bg-[#15151E]/95 border border-white/10 p-5 text-center space-y-1">
                   <p className="text-xs font-black uppercase tracking-widest text-[#8E8E93]">
                     Puntaje de la Vuelta
                   </p>
-                  <p className="text-3xl sm:text-4xl font-black font-mono text-white">
+                  <p className="text-3xl font-black font-mono text-white">
                     {counts.totalPoints}{" "}
-                    <span className="text-base text-[#8E8E93]">
+                    <span className="text-sm text-[#8E8E93]">
                       / {MAX_POSSIBLE_POINTS} pts
                     </span>
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-[#15151E]/95 border border-cyan-500/30 p-5 text-center space-y-1">
+                  <p className="text-xs font-black uppercase tracking-widest text-cyan-300">
+                    Reacción Total (8 Curvas)
+                  </p>
+                  <p className="text-3xl font-black font-mono text-cyan-300">
+                    {lastLapReactionMs}{" "}
+                    <span className="text-sm text-[#8E8E93]">ms</span>
                   </p>
                 </div>
 
@@ -948,14 +1285,17 @@ export default function VueltaRapidaPage() {
                   <p className="text-xs font-black uppercase tracking-widest text-purple-300">
                     Mejor Marca Semanal
                   </p>
-                  <p className="text-2xl sm:text-3xl font-black font-mono text-purple-300">
-                    Tu récord de la semana: {weeklyRecord ?? counts.totalPoints} pts
+                  <p className="text-2xl font-black font-mono text-purple-300">
+                    {weeklyRecord ?? counts.totalPoints} pts
+                  </p>
+                  <p className="text-xs font-mono font-bold text-cyan-300">
+                    ⏱️ {weeklyBestReactionMs ?? lastLapReactionMs} ms
                   </p>
                 </div>
               </div>
 
               {/* Desglose de Sectores / Curvas de la vuelta */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-3xl mx-auto">
                 <div className="rounded-xl bg-purple-950/40 border border-purple-500/30 p-3 text-center">
                   <p className="text-[11px] font-black uppercase text-purple-300">
                     🟣 Violeta (+5)
@@ -990,13 +1330,13 @@ export default function VueltaRapidaPage() {
                 </div>
               </div>
 
-              {/* Mini Leaderboard Semanal (Poseedor de la Vuelta Rápida) */}
-              <div className="max-w-2xl mx-auto rounded-2xl bg-[#15151E]/95 border border-white/10 p-5 sm:p-6 space-y-4">
-                <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-3">
+              {/* Mini Leaderboard Semanal (Desempate por Milisegundos) */}
+              <div className="max-w-3xl mx-auto rounded-2xl bg-[#15151E]/95 border border-white/10 p-5 sm:p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
                   <div className="flex items-center gap-2">
                     <Trophy className="w-5 h-5 text-purple-400" />
                     <h2 className="text-sm sm:text-base font-black uppercase tracking-wider text-white">
-                      Leaderboard • Vuelta Rápida de la Semana
+                      Tabla Semanal • Desempate por Milisegundos
                     </h2>
                   </div>
                   <span className="text-[11px] font-bold text-purple-300 bg-purple-500/15 border border-purple-500/30 px-2.5 py-0.5 rounded-full">
@@ -1006,18 +1346,22 @@ export default function VueltaRapidaPage() {
 
                 {fastestLapHolder ? (
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-4 p-4 rounded-xl bg-gradient-to-r from-purple-950/70 via-[#1F1F27] to-[#1F1F27] border border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.2)]">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-gradient-to-r from-purple-950/70 via-[#1F1F27] to-[#1F1F27] border border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.2)]">
                       <div className="flex items-center gap-3.5">
-                        <div className="w-10 h-10 rounded-xl bg-purple-500 text-white font-mono font-black text-sm flex items-center justify-center shadow-md">
+                        <div className="w-10 h-10 rounded-xl bg-purple-500 text-white font-mono font-black text-sm flex items-center justify-center shadow-md shrink-0">
                           P1
                         </div>
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs font-black uppercase tracking-wider text-purple-300">
                               🟣 Récord de Vuelta Rápida
                             </span>
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 backdrop-blur-md border border-emerald-400/40 text-emerald-300 text-[10px] font-black uppercase tracking-wider">
+                              <Zap className="w-2.5 h-2.5 text-emerald-400 fill-current" />
+                              +1 pt extra en GP
+                            </span>
                           </div>
-                          <p className="text-base sm:text-lg font-black text-white">
+                          <p className="text-base sm:text-lg font-black text-white mt-0.5">
                             {fastestLapHolder.nombre}
                             {fastestLapHolder.userId === user?.uid && (
                               <span className="ml-2 text-xs font-bold text-cyan-400">
@@ -1028,12 +1372,12 @@ export default function VueltaRapidaPage() {
                         </div>
                       </div>
 
-                      <div className="text-right">
+                      <div className="text-left sm:text-right pl-13 sm:pl-0">
                         <p className="text-xl sm:text-2xl font-black font-mono text-purple-300">
-                          {fastestLapHolder.puntaje} pts
+                          {fastestLapHolder.puntajeTotal} pts
                         </p>
-                        <p className="text-[10px] uppercase tracking-wider text-[#8E8E93]">
-                          de {MAX_POSSIBLE_POINTS} posibles
+                        <p className="text-xs font-mono font-bold text-cyan-300">
+                          ⏱️ {fastestLapHolder.tiempoReaccionTotal} ms
                         </p>
                       </div>
                     </div>
@@ -1056,9 +1400,14 @@ export default function VueltaRapidaPage() {
                             )}
                           </span>
                         </div>
-                        <span className="font-mono font-black text-[#D0D0D2]">
-                          {entry.puntaje} pts
-                        </span>
+                        <div className="flex items-center gap-3 font-mono">
+                          <span className="font-black text-[#D0D0D2]">
+                            {entry.puntajeTotal} pts
+                          </span>
+                          <span className="text-xs text-cyan-300 font-bold">
+                            {entry.tiempoReaccionTotal} ms
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1069,7 +1418,72 @@ export default function VueltaRapidaPage() {
                 )}
               </div>
 
-              {/* Botones de Acción: Reiniciar (si quedan intentos hoy) o Volver al Hub */}
+              {/* Sistema de Medallas por Puntaje Perfecto Histórico (40/40 pts) */}
+              <div className="max-w-3xl mx-auto rounded-2xl bg-[#15151E]/95 border border-white/10 p-5 sm:p-6 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <Medal className="w-5 h-5 text-amber-400" />
+                    <div>
+                      <h2 className="text-sm sm:text-base font-black uppercase tracking-wider text-white">
+                        Logros Históricos • Vuelta Perfecta (40/40 pts)
+                      </h2>
+                      <p className="text-[11px] text-[#8E8E93]">
+                        Clavá los 8 sectores en violeta (40 puntos) para desbloquear medallas de Bronce, Plata y Oro en tu vitrina.
+                      </p>
+                    </div>
+                  </div>
+
+                  <span className="px-3 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs font-black font-mono">
+                    Vueltas Perfectas: {vueltasPerfectas}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {PERFECT_MEDAL_TIERS.map((medal) => {
+                    const isUnlocked = vueltasPerfectas >= medal.threshold;
+                    return (
+                      <div
+                        key={medal.tier}
+                        className={`relative rounded-2xl bg-gradient-to-b p-4 border flex flex-col items-center text-center transition-all ${
+                          isUnlocked
+                            ? `${medal.bgClass} ${medal.borderClass} ${medal.glowClass}`
+                            : "from-[#1A1A24]/70 to-[#12121A]/80 border-[#2D2D38] opacity-65"
+                        }`}
+                      >
+                        <ThemedTrophy
+                          badgeId="vueltas_perfectas"
+                          tier={isUnlocked ? medal.tier : "bloqueado"}
+                          isZero={!isUnlocked}
+                          className="w-20 h-20"
+                        />
+                        <span
+                          className={`mt-2 text-xs font-black uppercase tracking-wider ${
+                            isUnlocked ? medal.textClass : "text-[#8E8E93]"
+                          }`}
+                        >
+                          Medalla de {medal.label}
+                        </span>
+                        <p className="text-[11px] font-bold text-white mt-0.5">
+                          {medal.reqText}
+                        </p>
+                        <span
+                          className={`mt-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                            isUnlocked
+                              ? "bg-emerald-500/20 border border-emerald-400/40 text-emerald-300"
+                              : "bg-[#15151E] border border-white/10 text-[#8E8E93]"
+                          }`}
+                        >
+                          {isUnlocked
+                            ? "Desbloqueada"
+                            : `${Math.min(vueltasPerfectas, medal.threshold)} / ${medal.threshold}`}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Botones de Acción: Reiniciar (si quedan intentos de la semana) o Volver al Hub */}
               <div className="pt-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-center gap-4">
                 {attemptsRemaining > 0 ? (
                   <button
@@ -1082,14 +1496,14 @@ export default function VueltaRapidaPage() {
                     <span>
                       Reiniciar Vuelta ({attemptsRemaining}{" "}
                       {attemptsRemaining === 1
-                        ? "intento disponible"
-                        : "intentos disponibles"}
+                        ? "intento semanal disponible"
+                        : "intentos semanales disponibles"}
                       )
                     </span>
                   </button>
                 ) : (
                   <div className="px-5 py-3 rounded-2xl bg-[#15151E] border border-white/10 text-xs font-bold text-amber-300">
-                    ¡Ya agotaste tus 3 intentos de hoy! Volvé mañana para mejorar tu marca.
+                    ¡Ya completaste tus 5 intentos de la semana! Regresa la próxima semana.
                   </div>
                 )}
 
@@ -1527,9 +1941,150 @@ export default function VueltaRapidaPage() {
                   </button>
                 )}
               </div>
+
+              {/* Vitrina de Medallas por Vuelta Perfecta (40/40) visible en modo espera */}
+              {!hasStarted && (
+                <div className="rounded-2xl sm:rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-4 sm:p-6 shadow-xl space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <Award className="w-5 h-5 text-amber-400" />
+                      <div>
+                        <h2 className="text-xs sm:text-sm font-black uppercase tracking-wider text-white">
+                          Sistema de Medallas • Vuelta Perfecta Histórica (40/40 pts)
+                        </h2>
+                        <p className="text-[11px] text-[#8E8E93]">
+                          1 vez = Bronce • 5 veces = Plata • 10 veces = Oro • El ganador semanal suma{" "}
+                          <strong className="text-emerald-400">+1 pt extra</strong> en el GP.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#15151E] border border-amber-500/30 text-xs font-black text-amber-300 font-mono">
+                      <span>Vueltas Perfectas: {vueltasPerfectas}</span>
+                      {currentPerfectMedalTier !== "bloqueado" && (
+                        <span className="uppercase text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-white">
+                          {currentPerfectMedalTier}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {PERFECT_MEDAL_TIERS.map((medal) => {
+                      const isUnlocked = vueltasPerfectas >= medal.threshold;
+                      return (
+                        <div
+                          key={medal.tier}
+                          className={`rounded-2xl bg-gradient-to-b p-3.5 border flex items-center gap-3.5 transition-all ${
+                            isUnlocked
+                              ? `${medal.bgClass} ${medal.borderClass} ${medal.glowClass}`
+                              : "from-[#15151E]/90 to-[#12121A]/90 border-white/10 opacity-70"
+                          }`}
+                        >
+                          <div className="shrink-0">
+                            <ThemedTrophy
+                              badgeId="vueltas_perfectas"
+                              tier={isUnlocked ? medal.tier : "bloqueado"}
+                              isZero={!isUnlocked}
+                              className="w-16 h-16"
+                            />
+                          </div>
+                          <div className="min-w-0 text-left space-y-1">
+                            <span
+                              className={`block text-xs font-black uppercase tracking-wider ${
+                                isUnlocked ? medal.textClass : "text-[#8E8E93]"
+                              }`}
+                            >
+                              Medalla de {medal.label}
+                            </span>
+                            <p className="text-[11px] font-bold text-white leading-snug">
+                              {medal.reqText}
+                            </p>
+                            <span
+                              className={`inline-block text-[10px] font-black font-mono uppercase px-2 py-0.5 rounded-full ${
+                                isUnlocked
+                                  ? "bg-emerald-500/20 border border-emerald-400/40 text-emerald-300"
+                                  : "bg-black/40 border border-white/10 text-[#8E8E93]"
+                              }`}
+                            >
+                              {isUnlocked
+                                ? "Desbloqueada"
+                                : `Progreso: ${Math.min(vueltasPerfectas, medal.threshold)} / ${medal.threshold}`}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </main>
+
+        {/* =============================================================== */}
+        {/* MODAL / ALERTA DE CELEBRACIÓN AL DESBLOQUEAR MEDALLA 40/40      */}
+        {/* =============================================================== */}
+        {unlockedMedalAlert && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+            onClick={() => setUnlockedMedalAlert(null)}
+          >
+            <div
+              className="relative w-full max-w-md rounded-3xl bg-gradient-to-b from-[#1F1F2B] via-[#171722] to-[#12121A] border border-amber-400/50 p-6 sm:p-8 text-center shadow-[0_0_60px_rgba(255,215,0,0.3)] space-y-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setUnlockedMedalAlert(null)}
+                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-center text-[#8E8E93] hover:text-white transition-colors cursor-pointer"
+                aria-label="Cerrar alerta de logro"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-black uppercase tracking-widest">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>¡Nuevo Logro Histórico Desbloqueado!</span>
+              </div>
+
+              <div className="flex justify-center py-2">
+                <ThemedTrophy
+                  badgeId="vueltas_perfectas"
+                  tier={unlockedMedalAlert.tier}
+                  isZero={false}
+                  className="w-28 h-28"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                  {unlockedMedalAlert.title}
+                </h2>
+                <p className="text-xs sm:text-sm text-[#D0D0D2] leading-relaxed">
+                  {unlockedMedalAlert.subtitle}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-[#15151E]/90 border border-purple-500/40 px-4 py-3 flex items-center justify-between text-xs font-bold">
+                <span className="text-[#8E8E93] uppercase tracking-wider">
+                  Vueltas Perfectas (40/40)
+                </span>
+                <span className="font-mono text-base font-black text-purple-300">
+                  {unlockedMedalAlert.vueltasPerfectas}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setUnlockedMedalAlert(null)}
+                className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-black text-xs sm:text-sm uppercase tracking-widest shadow-[0_0_25px_rgba(245,158,11,0.45)] transition-all cursor-pointer"
+              >
+                ¡Lucir Medalla en mi Perfil!
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </ProtectedRoute>
   );

@@ -54,11 +54,11 @@ export default function MinijuegosHubPage() {
       title: "Vuelta Rápida",
       subtitle: "Precisión en Apex • GP de Austin",
       description:
-        "Domina los 8 APEX del Circuito de las Américas en una vuelta lanzada de 10 segundos. Disponible de lunes a jueves con 3 intentos diarios.",
+        "Domina los 8 APEX del Circuito de las Américas en una vuelta lanzada de 10 segundos. Disponible de lunes a jueves con 5 intentos por semana.",
       href: "/minijuegos/vuelta",
       icon: Gauge,
       badgeIcon: Flag,
-      badgeText: "3 intentos / día",
+      badgeText: "5 intentos / semana",
       accentColor: "#06B6D4",
       glowClass:
         "hover:border-cyan-500/60 hover:shadow-[0_0_35px_rgba(6,182,212,0.2)]",

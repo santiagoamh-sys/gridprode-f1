@@ -8,7 +8,10 @@ import { useF1Data } from "@/context/F1DataContext";
 import {
   getAllUsuariosRanking,
   getAllPredicciones,
+  getGanadorVueltaRapidaSemanal,
+  VueltaRapidaWinner,
 } from "@/lib/firebase/f1Service";
+import { currentCircuit } from "@/data/circuits";
 import { UserProfile } from "@/types/auth";
 import { Prediccion, DesglosePuntos } from "@/types/f1";
 import {
@@ -19,6 +22,7 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  Zap,
 } from "lucide-react";
 
 export default function RankingPage() {
@@ -38,6 +42,7 @@ interface RankedUserRow {
   profile: UserProfile;
   totalPoints: number;
   predictionsByGp: Record<string, Prediccion>;
+  isVrWeeklyWinner: boolean;
 }
 
 function RankingContent() {
@@ -45,16 +50,20 @@ function RankingContent() {
   const { allGrandPrixList, grandPrixList, getPiloto, getEscuderia } =
     useF1Data();
   const [rows, setRows] = useState<RankedUserRow[]>([]);
+  const [weeklyVrWinner, setWeeklyVrWinner] =
+    useState<VueltaRapidaWinner | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
 
   const loadLeaderboard = async () => {
     try {
       setLoading(true);
-      const [users, preds] = await Promise.all([
+      const [users, preds, vrWinner] = await Promise.all([
         getAllUsuariosRanking(),
         getAllPredicciones(),
+        getGanadorVueltaRapidaSemanal(currentCircuit.gpId),
       ]);
+      setWeeklyVrWinner(vrWinner);
 
       const predsByUser = new Map<string, Record<string, Prediccion>>();
       const sumByUser = new Map<string, number>();
@@ -73,16 +82,28 @@ function RankingContent() {
       });
 
       const combined: RankedUserRow[] = users.map((u) => {
+        const userPreds = predsByUser.get(u.uid) || {};
+        const isVrWeeklyWinner =
+          vrWinner !== null && vrWinner.userId === u.uid;
+
+        // Si es el ganador de la Vuelta Rápida de la semana y el +1 aún no fue consolidado en su predicción evaluada, sumarlo al total
+        const currentGpPred = userPreds[currentCircuit.gpId];
+        const alreadyHasVrBonusInPred =
+          currentGpPred?.bonus_vuelta_rapida === 1;
+        const pendingVrBonus =
+          isVrWeeklyWinner && !alreadyHasVrBonusInPred ? 1 : 0;
+
         const calculatedSum = sumByUser.get(u.uid);
-        const totalPoints =
+        const basePoints =
           typeof calculatedSum === "number" && calculatedSum > 0
             ? Math.max(u.puntaje_global ?? 0, calculatedSum)
             : u.puntaje_global ?? 0;
 
         return {
           profile: u,
-          totalPoints,
-          predictionsByGp: predsByUser.get(u.uid) || {},
+          totalPoints: basePoints + pendingVrBonus,
+          predictionsByGp: userPreds,
+          isVrWeeklyWinner,
         };
       });
 
@@ -208,13 +229,22 @@ function RankingContent() {
                     )}
 
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm sm:text-base font-black text-white truncate">
                           {u.nombre || u.displayName || "Piloto"}
                         </p>
                         {isCurrentUser && (
                           <span className="text-[10px] font-black uppercase bg-[#E10600] text-white px-2 py-0.5 rounded">
                             Tú
+                          </span>
+                        )}
+                        {row.isVrWeeklyWinner && (
+                          <span
+                            title={`Ganador Vuelta Rápida Semanal (${weeklyVrWinner?.puntajeTotal ?? 0} pts • ${weeklyVrWinner?.tiempoReaccionTotal ?? 0} ms) • +1 pt extra en GP`}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-emerald-500/15 backdrop-blur-md border border-emerald-400/40 text-emerald-300 text-[10px] sm:text-[11px] font-black uppercase tracking-wider shadow-[0_0_15px_rgba(16,185,129,0.25)]"
+                          >
+                            <Zap className="w-3 h-3 text-emerald-400 fill-current" />
+                            <span>Vuelta Rápida (+1 pt)</span>
                           </span>
                         )}
                       </div>
@@ -243,6 +273,13 @@ function RankingContent() {
                       const pred = row.predictionsByGp[gp.id];
                       const scored =
                         pred && typeof pred.puntos_totales === "number";
+                      const hasPendingVrBonus =
+                        row.isVrWeeklyWinner &&
+                        gp.id === currentCircuit.gpId &&
+                        pred?.bonus_vuelta_rapida !== 1;
+                      const displayedGpPoints = scored
+                        ? (pred.puntos_totales ?? 0) + (hasPendingVrBonus ? 1 : 0)
+                        : null;
                       return (
                         <div
                           key={gp.id}
@@ -257,10 +294,14 @@ function RankingContent() {
                         >
                           <span>{gp.bandera || "🏁"}</span>
                           <span className="font-mono font-black">
-                            {scored
-                              ? `${pred.puntos_totales} pts`
+                            {displayedGpPoints !== null
+                              ? `${displayedGpPoints} pts`
                               : pred
-                              ? "Cargado"
+                              ? hasPendingVrBonus
+                                ? "Cargado (+1 VR)"
+                                : "Cargado"
+                              : hasPendingVrBonus
+                              ? "+1 VR"
                               : "—"}
                           </span>
                         </div>

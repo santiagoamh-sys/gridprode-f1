@@ -11,6 +11,7 @@ export interface UserProfile {
   piloto_favorito_id: string | null;
   escuderia_favorita_id: string | null;
   badges_progress?: Record<string, number>;
+  vueltasPerfectas?: number;
   createdAt?: any;
   lastLoginAt?: any;
 }

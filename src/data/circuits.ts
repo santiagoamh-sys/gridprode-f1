@@ -15,6 +15,7 @@ export interface CircuitApexConfig {
 
 export interface CircuitConfig {
   id: string;
+  gpId: string;
   name: string;
   grandPrix: string;
   viewBox: string;
@@ -37,6 +38,7 @@ export interface CircuitConfig {
  */
 export const currentCircuit: CircuitConfig = {
   id: "austin_cota_2026",
+  gpId: "gp-usa-2026",
   name: "Circuito de las Américas (COTA)",
   grandPrix: "GP de Estados Unidos • Austin",
   viewBox: "8 14 484 468",
