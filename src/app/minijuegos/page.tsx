@@ -12,6 +12,8 @@ import {
   Sparkles,
   Zap,
   HelpCircle,
+  Gauge,
+  Flag,
 } from "lucide-react";
 
 export default function MinijuegosHubPage() {
@@ -47,6 +49,22 @@ export default function MinijuegosHubPage() {
       buttonClass:
         "bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white shadow-[0_0_20px_rgba(245,158,11,0.35)]",
     },
+    {
+      id: "vuelta",
+      title: "Vuelta Rápida",
+      subtitle: "Precisión en Apex • GP de Austin",
+      description:
+        "Domina los 8 APEX del Circuito de las Américas en una vuelta lanzada de 15 segundos. Disponible de lunes a jueves con 3 intentos diarios.",
+      href: "/minijuegos/vuelta",
+      icon: Gauge,
+      badgeIcon: Flag,
+      badgeText: "3 intentos / día",
+      accentColor: "#06B6D4",
+      glowClass:
+        "hover:border-cyan-500/60 hover:shadow-[0_0_35px_rgba(6,182,212,0.2)]",
+      buttonClass:
+        "bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white shadow-[0_0_20px_rgba(6,182,212,0.35)]",
+    },
   ];
 
   return (
@@ -79,10 +97,10 @@ export default function MinijuegosHubPage() {
                 <Sparkles className="w-5 h-5 text-amber-400" />
                 <div>
                   <p className="text-xs font-black text-white uppercase tracking-wider">
-                    2 Modos Disponibles
+                    3 Modos Disponibles
                   </p>
                   <p className="text-[11px] text-[#8E8E93]">
-                    Juega sin límite de intentos
+                    Compite cada semana de GP
                   </p>
                 </div>
               </div>
@@ -90,7 +108,7 @@ export default function MinijuegosHubPage() {
           </div>
 
           {/* Grilla de Tarjetas Grandes de Juegos */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
             {games.map((game) => {
               const Icon = game.icon;
               const BadgeIcon = game.badgeIcon;
