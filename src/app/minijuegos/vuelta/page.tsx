@@ -32,14 +32,14 @@ import {
 
 import { currentCircuit, type CircuitApexConfig } from "@/data/circuits";
 
-const LAP_DURATION_MS = 15000; // 15.0 segundos exactos para la vuelta completa
+const LAP_DURATION_MS = 10000; // 10.0 segundos exactos para la vuelta completa
 const MAX_DAILY_ATTEMPTS = 3;
 const MAX_POSSIBLE_POINTS = 40; // 8 curvas * 5 pts
 
-// Nuevas tolerancias competitivas estrictas (en segundos)
-const TOLERANCE_VIOLETA_S = 0.08; // <= 80ms -> +5 pts
-const TOLERANCE_VERDE_S = 0.2;    // <= 200ms -> +3 pts
-const TOLERANCE_AMARILLO_S = 0.4; // <= 400ms -> +1 pt
+// Dificultad Extrema (Hitbox milimétrica en segundos)
+const TOLERANCE_VIOLETA_S = 0.025; // <= 25ms -> +5 pts
+const TOLERANCE_VERDE_S = 0.05;    // <= 50ms -> +3 pts
+const TOLERANCE_AMARILLO_S = 0.1;  // <= 100ms -> +1 pt
 
 type HitTier = "violeta" | "verde" | "amarillo" | "rojo";
 
@@ -58,6 +58,53 @@ interface LeaderboardEntry {
   nombre: string;
   puntaje: number;
   fecha?: string;
+}
+
+interface TelemetryWaypoint {
+  timeMs: number;
+  progress: number;
+}
+
+/**
+ * Simulación de físicas de F1 (Velocidad Variable):
+ * Interpolación de Hermite por tramos entre cada waypoint (Largada -> APEX 1..8 -> Meta).
+ * - Acelera progresivamente al salir de cada curva (pendiente inicial baja),
+ * - Alcanza velocidad punta máxima en mitad de las rectas (> 5x la velocidad de paso por curva),
+ * - Frena visiblemente al entrar en la zona de frenado justo antes de cada APEX,
+ * - Garantiza matemáticamente que en elapsedMs === apex.idealTimeMs el punto esté en el centro exacto del APEX.
+ */
+function computeF1VariableProgress(
+  elapsedMs: number,
+  waypoints: TelemetryWaypoint[]
+): number {
+  if (elapsedMs <= 0) return 0;
+  if (elapsedMs >= LAP_DURATION_MS) return 1;
+
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const w0 = waypoints[i];
+    const w1 = waypoints[i + 1];
+
+    if (elapsedMs >= w0.timeMs && elapsedMs <= w1.timeMs) {
+      const duration = Math.max(1, w1.timeMs - w0.timeMs);
+      const u = (elapsedMs - w0.timeMs) / duration; // 0..1 dentro del sector
+      const isFinalStraight = i === waypoints.length - 2;
+
+      // m0 = velocidad relativa de tracción a la salida de la curva previa
+      // m1 = velocidad relativa de frenada al llegar al centro del APEX (o cruce de meta a fondo)
+      const m0 = i === 0 ? 0.45 : 0.34;
+      const m1 = isFinalStraight ? 1.45 : 0.22;
+
+      // Polinomio cúbico de Hermite f(u) con f(0)=0, f(1)=1, f'(0)=m0, f'(1)=m1
+      const u2 = u * u;
+      const u3 = u2 * u;
+      const easedU =
+        (m0 + m1 - 2) * u3 + (3 - 2 * m0 - m1) * u2 + m0 * u;
+
+      return w0.progress + (w1.progress - w0.progress) * easedU;
+    }
+  }
+
+  return 1;
 }
 
 /**
@@ -113,25 +160,72 @@ export default function VueltaRapidaPage() {
   const dotCoreRef = useRef<SVGCircleElement | null>(null);
   const timerDisplayRef = useRef<HTMLSpanElement | null>(null);
 
+  // Waypoints precalculados para la física de velocidad variable (Largada -> 8 APEX -> Meta)
+  const waypointsRef = useRef<TelemetryWaypoint[]>([
+    { timeMs: 0, progress: 0 },
+    ...currentCircuit.apexes.map((ap) => ({
+      timeMs: ap.idealTimeMs,
+      progress: ap.progress,
+    })),
+    { timeMs: LAP_DURATION_MS, progress: 1 },
+  ]);
+
   const rafIdRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
   const isRunningRef = useRef<boolean>(false);
   const hasFinishedLapRef = useRef<boolean>(false);
   const apexResultsRef = useRef<Record<number, HitTier>>({});
 
-  // Callback ref para cachear la longitud total del <path> apenas se monta en el DOM
+  // Callback ref para calibrar la longitud exacta del <path> y cada APEX apenas se monta en el DOM
   const setTrackPathNode = useCallback((node: SVGPathElement | null) => {
     trackPathRef.current = node;
     if (node) {
       try {
-        totalPathLengthRef.current = node.getTotalLength();
+        const totalLen = node.getTotalLength();
+        totalPathLengthRef.current = totalLen;
+
+        if (totalLen > 0) {
+          // Ajuste fino de progreso sobre el SVGPathElement nativo del navegador para precisión sub-píxel
+          const sampleCount = 800;
+          const calibratedApexWaypoints: TelemetryWaypoint[] =
+            currentCircuit.apexes.map((ap) => {
+              let bestProgress = ap.progress;
+              let minSq = Infinity;
+              const minSearch = Math.max(0, ap.progress - 0.04);
+              const maxSearch = Math.min(1, ap.progress + 0.04);
+
+              for (let s = 0; s <= sampleCount; s++) {
+                const p =
+                  minSearch + ((maxSearch - minSearch) * s) / sampleCount;
+                const pt = node.getPointAtLength(p * totalLen);
+                const dx = pt.x - ap.x;
+                const dy = pt.y - ap.y;
+                const distSq = dx * dx + dy * dy;
+                if (distSq < minSq) {
+                  minSq = distSq;
+                  bestProgress = p;
+                }
+              }
+
+              return {
+                timeMs: ap.idealTimeMs,
+                progress: bestProgress,
+              };
+            });
+
+          waypointsRef.current = [
+            { timeMs: 0, progress: 0 },
+            ...calibratedApexWaypoints,
+            { timeMs: LAP_DURATION_MS, progress: 1 },
+          ];
+        }
       } catch {
         totalPathLengthRef.current = 0;
       }
     }
   }, []);
 
-  // Posicionar el punto luminoso en (x, y) directamente sobre el DOM sin re-renderizar React
+  // Posicionar el punto luminoso (6-8px) en (x, y) directamente sobre el DOM sin re-renderizar React
   const setDotDomPosition = useCallback((x: number, y: number) => {
     const cx = String(x);
     const cy = String(y);
@@ -333,17 +427,17 @@ export default function VueltaRapidaPage() {
   const spawnFloatingFeedback = useCallback(
     (apex: CircuitApexConfig, tier: HitTier, customSubtext?: string) => {
       const config: Record<HitTier, { text: string; defaultSub: string }> = {
-        violeta: { text: "¡VIOLETA! +5", defaultSub: "≤ 80ms • PERFECTO" },
-        verde: { text: "¡VERDE! +3", defaultSub: "≤ 200ms • GRAN TRAZADA" },
-        amarillo: { text: "¡AMARILLO! +1", defaultSub: "≤ 400ms • AL LÍMITE" },
-        rojo: { text: "¡ROJO! +0", defaultSub: "> 400ms • FUERA DE TIEMPO" },
+        violeta: { text: "¡VIOLETA! +5", defaultSub: "≤ 25ms • MILIMÉTRICO" },
+        verde: { text: "¡VERDE! +3", defaultSub: "≤ 50ms • GRAN TRAZADA" },
+        amarillo: { text: "¡AMARILLO! +1", defaultSub: "≤ 100ms • AL LÍMITE" },
+        rojo: { text: "¡ROJO! +0", defaultSub: "> 100ms • FUERA DE TIEMPO" },
       };
 
       const item: FloatingFeedback = {
         key: `${apex.id}-${performance.now()}`,
         apexId: apex.id,
-        x: apex.x,
-        y: apex.y,
+        x: Math.min(410, Math.max(85, apex.x)),
+        y: Math.max(48, apex.y),
         text: config[tier].text,
         subtext: customSubtext || config[tier].defaultSub,
         tier,
@@ -353,7 +447,7 @@ export default function VueltaRapidaPage() {
 
       setTimeout(() => {
         setFloatingFeedbacks((prev) => prev.filter((f) => f.key !== item.key));
-      }, 1050);
+      }, 950);
     },
     []
   );
@@ -509,7 +603,7 @@ export default function VueltaRapidaPage() {
     recordApexOutcomeRef.current = recordApexOutcome;
   }, [recordApexOutcome]);
 
-  // Bucle imperativo de alta frecuencia (0ms de delay al presionar ¡ARRANCAR!)
+  // Bucle imperativo de alta frecuencia (10 segundos, velocidad variable F1 y sentido antihorario)
   const startImmediateLoop = useCallback(() => {
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
@@ -526,7 +620,7 @@ export default function VueltaRapidaPage() {
     isRunningRef.current = true;
     hasFinishedLapRef.current = false;
 
-    const missToleranceMs = TOLERANCE_AMARILLO_S * 1000; // 400ms
+    const missToleranceMs = TOLERANCE_AMARILLO_S * 1000; // 100ms
 
     const tick = (now: number) => {
       if (!isRunningRef.current) return;
@@ -534,24 +628,27 @@ export default function VueltaRapidaPage() {
       const elapsed = Math.max(0, now - startTimeRef.current);
       const clampedElapsed = Math.min(elapsed, LAP_DURATION_MS);
 
-      // Actualizar cronómetro directamente en el DOM sin provocar re-renders en cada frame
+      // Actualizar cronómetro directamente en el DOM (10.00s)
       if (timerDisplayRef.current) {
-        timerDisplayRef.current.textContent = `${(clampedElapsed / 1000).toFixed(2)}s / 15.00s`;
+        timerDisplayRef.current.textContent = `${(clampedElapsed / 1000).toFixed(2)}s / 10.00s`;
       }
 
-      // Mover el punto luminoso directamente en el DOM sobre el <path>
+      // Calcular posición con físicas de F1 (rápido en rectas, frenada intensa antes de cada APEX)
       const currentPath = trackPathRef.current;
       const totalLen =
         totalPathLengthRef.current ||
         (currentPath ? currentPath.getTotalLength() : 0);
 
       if (currentPath && totalLen > 0) {
-        const progress = clampedElapsed / LAP_DURATION_MS;
-        const pt = currentPath.getPointAtLength(progress * totalLen);
+        const variableProgress = computeF1VariableProgress(
+          clampedElapsed,
+          waypointsRef.current
+        );
+        const pt = currentPath.getPointAtLength(variableProgress * totalLen);
         setDotDomPosition(pt.x, pt.y);
       }
 
-      // Marcar automáticamente como ROJO (0 pts) cualquier APEX que se haya pasado por > 0.4s (400ms)
+      // Marcar automáticamente como ROJO (0 pts) cualquier APEX no presionado tras > 0.1s (100ms)
       const apexes = currentCircuit.apexes;
       for (let i = 0; i < apexes.length; i++) {
         const ap = apexes[i];
@@ -570,7 +667,7 @@ export default function VueltaRapidaPage() {
       rafIdRef.current = requestAnimationFrame(tick);
     };
 
-    // Ejecutar el primer paso de inmediato (0ms de espera) y encolar el siguiente frame
+    // Ejecutar el primer paso de inmediato (0ms de espera)
     tick(startTimestamp);
   }, [setDotDomPosition]);
 
@@ -584,7 +681,7 @@ export default function VueltaRapidaPage() {
     };
   }, []);
 
-  // 1. Acción "¡ARRANCAR!" con respuesta instantánea (0ms delay)
+  // Acción "¡ARRANCAR!" con respuesta instantánea (0ms delay)
   const handleStartLap = useCallback(() => {
     if (dailyAttempts >= MAX_DAILY_ATTEMPTS || isRunningRef.current) return;
 
@@ -600,11 +697,10 @@ export default function VueltaRapidaPage() {
       currentCircuit.startPoint.y
     );
 
-    // Disparo inmediato en el mismo ciclo de evento
     startImmediateLoop();
   }, [dailyAttempts, setDotDomPosition, startImmediateLoop]);
 
-  // 2. Acción "¡DOBLAR!" con nuevas tolerancias competitivas estrictas (80ms / 200ms / 400ms)
+  // Acción "¡DOBLAR!" con Dificultad Extrema (Hitbox milimétrica: 25ms / 50ms / 100ms)
   const handleTurnAction = useCallback(() => {
     if (!isRunningRef.current) return;
 
@@ -642,16 +738,16 @@ export default function VueltaRapidaPage() {
     const deltaMsText = `${Math.round(minDiffMs)}ms`;
 
     if (diffSeconds <= TOLERANCE_VIOLETA_S) {
-      // <= 0.08s (80ms): VIOLETA (+5 pts)
+      // <= 0.025s (25ms): VIOLETA 🟣 (+5 pts)
       recordApexOutcome(closestApex, "violeta", `Δ ${deltaMsText}`);
     } else if (diffSeconds <= TOLERANCE_VERDE_S) {
-      // <= 0.2s (200ms): VERDE (+3 pts)
+      // <= 0.05s (50ms): VERDE 🟢 (+3 pts)
       recordApexOutcome(closestApex, "verde", `Δ ${deltaMsText}`);
     } else if (diffSeconds <= TOLERANCE_AMARILLO_S) {
-      // <= 0.4s (400ms): AMARILLO (+1 pt)
+      // <= 0.1s (100ms): AMARILLO 🟡 (+1 pt)
       recordApexOutcome(closestApex, "amarillo", `Δ ${deltaMsText}`);
     } else {
-      // > 0.4s (400ms): ROJO (0 pts)
+      // > 0.1s (100ms): ROJO 🔴 (0 pts)
       recordApexOutcome(closestApex, "rojo", `Δ ${deltaMsText}`);
     }
   }, [recordApexOutcome]);
@@ -671,7 +767,7 @@ export default function VueltaRapidaPage() {
       currentCircuit.startPoint.y
     );
     if (timerDisplayRef.current) {
-      timerDisplayRef.current.textContent = "0.00s / 15.00s";
+      timerDisplayRef.current.textContent = "0.00s / 10.00s";
     }
   }, [dailyAttempts, setDotDomPosition]);
 
@@ -688,21 +784,21 @@ export default function VueltaRapidaPage() {
       <div className="min-h-screen bg-[#15151E] racing-grid text-[#D0D0D2] flex flex-col select-none">
         <Navbar />
 
-        <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6">
+        <main className="flex-1 max-w-5xl w-full mx-auto px-2 sm:px-6 lg:px-8 py-3 sm:py-6 space-y-3 sm:space-y-5">
           {/* Barra superior de retorno + Indicador de Intentos Diarios */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
             <Link
               href="/minijuegos"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#1F1F27]/80 backdrop-blur-md border border-white/10 text-xs font-bold text-[#D0D0D2] hover:text-white hover:border-white/20 transition-all"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1F1F27]/80 backdrop-blur-md border border-white/10 text-xs font-bold text-[#D0D0D2] hover:text-white hover:border-white/20 transition-all"
             >
               <ArrowLeft className="w-4 h-4 text-cyan-400" />
-              <span>Volver al Hub de Minijuegos</span>
+              <span>Volver al Hub</span>
             </Link>
 
             {!checkingAccess && isDayAllowed && (
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2">
                 {weeklyRecord !== null && (
-                  <div className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#1F1F27]/80 border border-purple-500/30 text-xs font-bold text-purple-300">
+                  <div className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1F1F27]/80 border border-purple-500/30 text-xs font-bold text-purple-300">
                     <Trophy className="w-3.5 h-3.5 text-purple-400" />
                     <span>
                       Récord Semanal:{" "}
@@ -713,7 +809,7 @@ export default function VueltaRapidaPage() {
                   </div>
                 )}
 
-                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-xl bg-cyan-500/15 border border-cyan-400/40 text-xs sm:text-sm font-black text-cyan-300 shadow-[0_0_20px_rgba(6,182,212,0.2)]">
+                <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-cyan-500/15 border border-cyan-400/40 text-xs sm:text-sm font-black text-cyan-300 shadow-[0_0_20px_rgba(6,182,212,0.2)]">
                   <Flame className="w-4 h-4 text-cyan-400" />
                   <span>
                     Intentos diarios:{" "}
@@ -1008,36 +1104,36 @@ export default function VueltaRapidaPage() {
             </div>
           ) : (
             /* =============================================================== */
-            /* 5. INTERFAZ PRINCIPAL DEL JUEGO (HUD + SVG COTA + BOTÓN)        */
+            /* 5. INTERFAZ PRINCIPAL DEL JUEGO (HUD + SVG OFICIAL MAXIMIZADO)  */
             /* =============================================================== */
-            <div className="space-y-5">
-              {/* HUD Superior: Puntuación Acumulada y Desglose en Tiempo Real */}
-              <div className="rounded-3xl bg-[#1F1F27]/85 backdrop-blur-xl border border-white/10 p-4 sm:p-6 shadow-xl">
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  {/* Título del circuito activo y Cronómetro de Vuelta */}
-                  <div className="flex items-center justify-between sm:justify-start gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-11 h-11 rounded-2xl bg-cyan-500/15 border border-cyan-400/40 flex items-center justify-center text-cyan-400 shrink-0">
-                        <Gauge className="w-6 h-6" />
+            <div className="space-y-3 sm:space-y-4">
+              {/* HUD Superior Compacto: Puntuación Acumulada y Desglose en Tiempo Real */}
+              <div className="rounded-2xl sm:rounded-3xl bg-[#1F1F27]/85 backdrop-blur-xl border border-white/10 p-3 sm:p-5 shadow-xl">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                  {/* Título del circuito activo y Cronómetro de Vuelta (10.00s) */}
+                  <div className="flex items-center justify-between sm:justify-start gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-cyan-500/15 border border-cyan-400/40 flex items-center justify-center text-cyan-400 shrink-0">
+                        <Gauge className="w-5 h-5 sm:w-6 sm:h-6" />
                       </div>
                       <div>
                         <span className="text-[10px] font-black uppercase tracking-widest text-cyan-400 block">
-                          {currentCircuit.grandPrix} • {currentCircuit.name}
+                          {currentCircuit.grandPrix} • Giro Antihorario
                         </span>
-                        <h1 className="text-lg sm:text-xl font-black text-white tracking-tight">
-                          Vuelta Rápida
+                        <h1 className="text-base sm:text-xl font-black text-white tracking-tight">
+                          Vuelta Rápida • 10s
                         </h1>
                       </div>
                     </div>
 
-                    <div className="px-3.5 py-1.5 rounded-xl bg-[#15151E] border border-white/10 font-mono text-xs sm:text-sm font-black text-cyan-300">
-                      <span ref={timerDisplayRef}>0.00s / 15.00s</span>
+                    <div className="px-3 py-1 rounded-xl bg-[#15151E] border border-white/10 font-mono text-xs sm:text-sm font-black text-cyan-300">
+                      <span ref={timerDisplayRef}>0.00s / 10.00s</span>
                     </div>
                   </div>
 
                   {/* Puntos en tiempo real y desglose por color */}
-                  <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2.5 sm:gap-3">
-                    <div className="px-4 py-2 rounded-2xl bg-[#15151E] border border-cyan-400/40 text-sm sm:text-base font-black text-white shadow-[0_0_15px_rgba(6,182,212,0.15)]">
+                  <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2">
+                    <div className="px-3.5 py-1.5 rounded-xl bg-[#15151E] border border-cyan-400/40 text-xs sm:text-sm font-black text-white shadow-[0_0_15px_rgba(6,182,212,0.15)]">
                       Puntos:{" "}
                       <span className="text-cyan-400 font-mono">
                         {counts.totalPoints}
@@ -1045,17 +1141,17 @@ export default function VueltaRapidaPage() {
                       pts
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 text-xs font-black font-mono">
-                      <span className="px-2.5 py-1.5 rounded-xl bg-purple-950/60 border border-purple-500/40 text-purple-300">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] sm:text-xs font-black font-mono">
+                      <span className="px-2 py-1 rounded-lg bg-purple-950/60 border border-purple-500/40 text-purple-300">
                         🟣 Violeta: {counts.violeta}
                       </span>
-                      <span className="px-2.5 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300">
+                      <span className="px-2 py-1 rounded-lg bg-emerald-950/60 border border-emerald-500/40 text-emerald-300">
                         🟢 Verde: {counts.verde}
                       </span>
-                      <span className="px-2.5 py-1.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-300">
+                      <span className="px-2 py-1 rounded-lg bg-amber-950/60 border border-amber-500/40 text-amber-300">
                         🟡 Amarillo: {counts.amarillo}
                       </span>
-                      <span className="px-2.5 py-1.5 rounded-xl bg-red-950/60 border border-red-500/40 text-red-300">
+                      <span className="px-2 py-1 rounded-lg bg-red-950/60 border border-red-500/40 text-red-300">
                         🔴 Rojo: {counts.rojo}
                       </span>
                     </div>
@@ -1063,44 +1159,44 @@ export default function VueltaRapidaPage() {
                 </div>
               </div>
 
-              {/* Contenedor Interactivo del Trazado SVG Dinámico */}
-              <div className="relative rounded-3xl bg-[#111118]/90 backdrop-blur-xl border border-white/10 p-3 sm:p-6 shadow-2xl overflow-hidden">
+              {/* Contenedor Interactivo del Trazado SVG Oficial Maximizado en Móvil */}
+              <div className="relative rounded-2xl sm:rounded-3xl bg-[#111118]/90 backdrop-blur-xl border border-white/10 p-1.5 sm:p-4 shadow-2xl overflow-hidden">
                 <div className="absolute -top-24 left-1/3 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
                 <div className="absolute -bottom-24 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
-                {/* Sub-barra informativa dentro del visor de telemetría */}
-                <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 mb-2 px-2 text-[11px] font-bold text-[#8E8E93]">
+                {/* Sub-barra informativa compacta */}
+                <div className="relative z-10 flex flex-wrap items-center justify-between gap-1.5 px-2 pt-1 pb-1 text-[10px] sm:text-[11px] font-bold text-[#8E8E93]">
                   <span>
-                    Presiona <strong className="text-white">¡DOBLAR!</strong> con
-                    precisión milimétrica al pasar por cada{" "}
+                    Giro <strong className="text-white">Antihorario</strong> • El
+                    punto acelera en rectas y frena al llegar a cada{" "}
                     <strong className="text-cyan-400">APEX (1 al 8)</strong>
                   </span>
                   {nextPendingApex && (
                     <span className="text-cyan-300 font-mono">
                       Próximo: APEX {nextPendingApex.id} •{" "}
-                      {nextPendingApex.name} (
-                      {nextPendingApex.idealTime.toFixed(2)}s)
+                      {nextPendingApex.name}
                     </span>
                   )}
                 </div>
 
-                {/* Lienzo SVG dinámico según currentCircuit.viewBox */}
-                <div className="relative w-full aspect-[8/5] max-h-[460px] mx-auto">
+                {/* Lienzo SVG Oficial Maximizado (w-full min-h-[50vh]) */}
+                <div className="relative w-full min-h-[50vh] sm:min-h-[56vh] flex items-center justify-center">
                   <svg
                     viewBox={currentCircuit.viewBox}
-                    className="w-full h-full overflow-visible"
+                    className="w-full min-h-[50vh] sm:min-h-[56vh] max-h-[68vh] h-auto overflow-visible"
+                    preserveAspectRatio="xMidYMid meet"
                   >
                     <defs>
-                      {/* Resplandor LED para el móvil (Punto Luminoso) */}
+                      {/* Resplandor LED para el móvil (Punto Luminoso de 6 a 8px) */}
                       <filter
                         id="dot-led-glow"
-                        x="-150%"
-                        y="-150%"
-                        width="400%"
-                        height="400%"
+                        x="-200%"
+                        y="-200%"
+                        width="500%"
+                        height="500%"
                       >
-                        <feGaussianBlur stdDeviation="4" result="blur1" />
-                        <feGaussianBlur stdDeviation="8" result="blur2" />
+                        <feGaussianBlur stdDeviation="3.5" result="blur1" />
+                        <feGaussianBlur stdDeviation="7" result="blur2" />
                         <feMerge>
                           <feMergeNode in="blur2" />
                           <feMergeNode in="blur1" />
@@ -1116,7 +1212,7 @@ export default function VueltaRapidaPage() {
                         width="300%"
                         height="300%"
                       >
-                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feGaussianBlur stdDeviation="2.5" result="blur" />
                         <feMerge>
                           <feMergeNode in="blur" />
                           <feMergeNode in="SourceGraphic" />
@@ -1124,66 +1220,66 @@ export default function VueltaRapidaPage() {
                       </filter>
                     </defs>
 
-                    {/* Borde exterior del asfalto / pianos */}
+                    {/* Contorno exterior blanco estilo silueta oficial F1 */}
                     <path
                       d={currentCircuit.pathD}
                       fill="none"
-                      stroke="rgba(255, 255, 255, 0.14)"
-                      strokeWidth="26"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-
-                    {/* Pista principal gris oscuro semi-translúcido (Path de referencia para getPointAtLength) */}
-                    <path
-                      ref={setTrackPathNode}
-                      d={currentCircuit.pathD}
-                      fill="none"
-                      stroke="rgba(55, 58, 70, 0.88)"
+                      stroke="rgba(255, 255, 255, 0.28)"
                       strokeWidth="20"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
 
-                    {/* Línea de trazada ideal interna */}
+                    {/* Pista principal gris oscuro semi-translúcido (Path oficial de Austin para getPointAtLength) */}
                     <path
+                      ref={setTrackPathNode}
                       d={currentCircuit.pathD}
                       fill="none"
-                      stroke="rgba(6, 182, 212, 0.2)"
-                      strokeWidth="2"
-                      strokeDasharray="6 8"
+                      stroke="rgba(42, 45, 58, 0.92)"
+                      strokeWidth="14"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
 
-                    {/* Línea de Largada / Meta */}
+                    {/* Línea de trazada interna en cian */}
+                    <path
+                      d={currentCircuit.pathD}
+                      fill="none"
+                      stroke="rgba(34, 211, 238, 0.22)"
+                      strokeWidth="1.6"
+                      strokeDasharray="5 7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+
+                    {/* Línea de Largada / Meta sobre la recta principal de Austin */}
                     <g
                       transform={`translate(${currentCircuit.startPoint.x}, ${currentCircuit.startPoint.y}) rotate(${currentCircuit.startPoint.angleDeg})`}
                     >
                       <rect
-                        x="-3"
-                        y="-13"
-                        width="6"
-                        height="26"
-                        rx="1.5"
+                        x="-2.5"
+                        y="-10"
+                        width="5"
+                        height="20"
+                        rx="1.2"
                         fill="#FFFFFF"
                         opacity="0.95"
                       />
                       <line
                         x1="0"
-                        y1="-13"
+                        y1="-10"
                         x2="0"
-                        y2="13"
+                        y2="10"
                         stroke="#E10600"
-                        strokeWidth="2"
-                        strokeDasharray="4 4"
+                        strokeWidth="1.8"
+                        strokeDasharray="3 3"
                       />
                     </g>
                     <text
-                      x={currentCircuit.startPoint.x - 42}
-                      y={currentCircuit.startPoint.y + 24}
+                      x={currentCircuit.startPoint.x - 12}
+                      y={currentCircuit.startPoint.y + 22}
                       fill="#9CA3AF"
-                      fontSize="9.5"
+                      fontSize="8.5"
                       fontWeight="800"
                       textAnchor="middle"
                       className="uppercase tracking-widest font-mono"
@@ -1191,13 +1287,13 @@ export default function VueltaRapidaPage() {
                       LARGADA / META
                     </text>
 
-                    {/* Los 8 Indicadores Fijos de APEX desde currentCircuit.apexes */}
+                    {/* Los 8 Indicadores Fijos de APEX sobre las curvas reales de Austin */}
                     {currentCircuit.apexes.map((apex) => {
                       const tier = apexResults[apex.id];
                       const isNext =
                         hasStarted && nextPendingApex?.id === apex.id;
 
-                      let ringColor = "#22D3EE"; // Cian brillante por defecto
+                      let ringColor = "#22D3EE";
                       let badgeBg = "rgba(8, 51, 68, 0.92)";
                       let badgeBorder = "#22D3EE";
                       let badgeText = "#67E8F9";
@@ -1233,11 +1329,11 @@ export default function VueltaRapidaPage() {
                             <circle
                               cx={apex.x}
                               cy={apex.y}
-                              r="14"
+                              r="11"
                               fill="none"
                               stroke="#22D3EE"
-                              strokeWidth="2"
-                              opacity="0.65"
+                              strokeWidth="1.8"
+                              opacity="0.7"
                               className="animate-ping"
                             />
                           )}
@@ -1246,36 +1342,36 @@ export default function VueltaRapidaPage() {
                           <circle
                             cx={apex.x}
                             cy={apex.y}
-                            r="6.5"
-                            fill="rgba(6, 182, 212, 0.28)"
+                            r="5.5"
+                            fill="rgba(6, 182, 212, 0.3)"
                             stroke={ringColor}
-                            strokeWidth="2.4"
+                            strokeWidth="2"
                             filter="url(#apex-cyan-glow)"
                           />
                           <circle
                             cx={apex.x}
                             cy={apex.y}
-                            r="2"
+                            r="1.8"
                             fill="#ECFEFF"
                           />
 
                           {/* Etiqueta con la palabra 'APEX' y su número (1 al 8) */}
                           <g transform={`translate(${labelX}, ${labelY})`}>
                             <rect
-                              x="-28"
-                              y="-10"
-                              width="56"
-                              height="19"
-                              rx="5"
+                              x="-24"
+                              y="-8.5"
+                              width="48"
+                              height="16"
+                              rx="4"
                               fill={badgeBg}
                               stroke={badgeBorder}
-                              strokeWidth="1.2"
+                              strokeWidth="1"
                             />
                             <text
                               x="0"
-                              y="3"
+                              y="2.5"
                               fill={badgeText}
-                              fontSize="9.5"
+                              fontSize="8.2"
                               fontWeight="900"
                               textAnchor="middle"
                               className="font-mono tracking-wider"
@@ -1287,14 +1383,14 @@ export default function VueltaRapidaPage() {
                       );
                     })}
 
-                    {/* El Móvil: Punto Luminoso muy pequeño (7px de diámetro = r 3.5) animado vía DOM refs */}
+                    {/* El Móvil: Punto Luminoso (glow) de 7px de diámetro (entre 6 y 8px) */}
                     <g>
                       <circle
                         ref={dotGlowRef}
                         cx={currentCircuit.startPoint.x}
                         cy={currentCircuit.startPoint.y}
-                        r="6"
-                        fill="rgba(34, 211, 238, 0.38)"
+                        r="5.5"
+                        fill="rgba(34, 211, 238, 0.45)"
                         filter="url(#dot-led-glow)"
                       />
                       <circle
@@ -1304,7 +1400,7 @@ export default function VueltaRapidaPage() {
                         r="3.5"
                         fill="#FFFFFF"
                         stroke="#22D3EE"
-                        strokeWidth="1.5"
+                        strokeWidth="1.2"
                         filter="url(#dot-led-glow)"
                       />
                     </g>
@@ -1326,26 +1422,26 @@ export default function VueltaRapidaPage() {
                       return (
                         <g
                           key={fb.key}
-                          transform={`translate(${fb.x}, ${fb.y - 28})`}
+                          transform={`translate(${fb.x}, ${fb.y - 22})`}
                           className="pointer-events-none"
                         >
                           <rect
-                            x="-72"
-                            y="-22"
-                            width="144"
-                            height="34"
-                            rx="8"
+                            x="-64"
+                            y="-19"
+                            width="128"
+                            height="29"
+                            rx="7"
                             fill="rgba(15, 15, 23, 0.94)"
                             stroke={colorMap[fb.tier]}
-                            strokeWidth="1.8"
+                            strokeWidth="1.5"
                           />
                           <text
                             x="0"
-                            y="-5"
+                            y="-4.5"
                             fill={colorMap[fb.tier]}
                             stroke={strokeMap[fb.tier]}
-                            strokeWidth="0.4"
-                            fontSize="13"
+                            strokeWidth="0.35"
+                            fontSize="11"
                             fontWeight="900"
                             textAnchor="middle"
                             className="font-mono uppercase tracking-wider"
@@ -1354,9 +1450,9 @@ export default function VueltaRapidaPage() {
                           </text>
                           <text
                             x="0"
-                            y="7"
+                            y="6"
                             fill="#E5E7EB"
-                            fontSize="8.5"
+                            fontSize="7.5"
                             fontWeight="700"
                             textAnchor="middle"
                             className="font-mono uppercase"
@@ -1369,24 +1465,24 @@ export default function VueltaRapidaPage() {
                   </svg>
                 </div>
 
-                {/* Leyenda de nuevas tolerancias competitivas estrictas */}
-                <div className="mt-3 pt-3 border-t border-white/10 flex flex-wrap items-center justify-center gap-4 text-[11px] font-bold text-[#8E8E93]">
+                {/* Leyenda de Dificultad Extrema (Hitbox milimétrica: 25ms / 50ms / 100ms) */}
+                <div className="mt-2 pt-2.5 border-t border-white/10 flex flex-wrap items-center justify-center gap-3 sm:gap-5 text-[10px] sm:text-[11px] font-bold text-[#8E8E93]">
                   <span>
-                    🟣 <strong className="text-purple-300">≤ 0.08s (80ms):</strong>{" "}
+                    🟣 <strong className="text-purple-300">≤ 0.025s (25ms):</strong>{" "}
                     +5 pts
                   </span>
                   <span>
-                    🟢 <strong className="text-emerald-300">≤ 0.2s (200ms):</strong>{" "}
+                    🟢 <strong className="text-emerald-300">≤ 0.05s (50ms):</strong>{" "}
                     +3 pts
                   </span>
                   <span>
-                    🟡 <strong className="text-amber-300">≤ 0.4s (400ms):</strong>{" "}
+                    🟡 <strong className="text-amber-300">≤ 0.1s (100ms):</strong>{" "}
                     +1 pt
                   </span>
                   <span>
                     🔴{" "}
                     <strong className="text-red-300">
-                      &gt; 0.4s / No presionar:
+                      &gt; 0.1s o no presionar:
                     </strong>{" "}
                     0 pts
                   </span>
@@ -1394,7 +1490,7 @@ export default function VueltaRapidaPage() {
               </div>
 
               {/* Botón Grande, Destacado y Centrado: "¡ARRANCAR!" / "¡DOBLAR!" */}
-              <div className="flex justify-center pt-1">
+              <div className="flex justify-center pt-1 pb-2">
                 {!hasStarted ? (
                   <button
                     type="button"
