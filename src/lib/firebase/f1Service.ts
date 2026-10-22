@@ -329,7 +329,14 @@ export async function getAllUsuariosRanking(): Promise<UserProfile[]> {
   if (!db) return [];
   try {
     const snap = await getDocs(collection(db, "users"));
-    const users = snap.docs.map((d) => d.data() as UserProfile);
+    const users = snap.docs.map((d) => {
+      const userData = d.data();
+      return {
+        ...userData,
+        uid: userData.uid || d.id,
+        puntaje_global: Number(userData.puntaje_global) || 0,
+      } as UserProfile;
+    });
     return users.sort(
       (a, b) => (b.puntaje_global ?? 0) - (a.puntaje_global ?? 0)
     );
