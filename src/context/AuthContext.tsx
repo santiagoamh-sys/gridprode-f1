@@ -16,7 +16,13 @@ import {
   syncUserProfile,
 } from "@/lib/firebase/authService";
 import { actualizarFavoritosUsuario } from "@/lib/firebase/f1Service";
-import { UserProfile, UserRole } from "@/types/auth";
+import {
+  UserProfile,
+  UserRole,
+  CarModelId,
+  CarDesignId,
+  CarColors,
+} from "@/types/auth";
 
 interface AuthContextType {
   user: User | null;
@@ -31,6 +37,12 @@ interface AuthContextType {
     pilotoId: string | null,
     escuderiaId: string | null
   ) => Promise<void>;
+  updateEscuderiaProfile: (data: {
+    nombre_escuderia: string;
+    modeloAuto: CarModelId;
+    disenoAuto: CarDesignId;
+    coloresAuto: CarColors;
+  }) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -43,6 +55,7 @@ const AuthContext = createContext<AuthContextType>({
   logout: async () => {},
   refreshProfile: async () => {},
   updateFavorites: async () => {},
+  updateEscuderiaProfile: () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -138,6 +151,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
+  const updateEscuderiaProfile = (data: {
+    nombre_escuderia: string;
+    modeloAuto: CarModelId;
+    disenoAuto: CarDesignId;
+    coloresAuto: CarColors;
+  }) => {
+    setProfile((prev) =>
+      prev
+        ? {
+            ...prev,
+            nombre_escuderia: data.nombre_escuderia,
+            modeloAuto: data.modeloAuto,
+            disenoAuto: data.disenoAuto,
+            coloresAuto: data.coloresAuto,
+          }
+        : null
+    );
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -150,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         logout,
         refreshProfile,
         updateFavorites,
+        updateEscuderiaProfile,
       }}
     >
       {children}

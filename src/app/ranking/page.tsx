@@ -24,6 +24,7 @@ import {
   RefreshCw,
   Zap,
 } from "lucide-react";
+import { CustomF1Car } from "@/components/CustomF1Car";
 
 export default function RankingPage() {
   return (
@@ -285,11 +286,27 @@ function RankingContent() {
                       </div>
                     )}
 
+                    {/* Render miniatura del CustomF1Car */}
+                    <div className="shrink-0 w-14 sm:w-16 h-8 bg-black/40 border border-[#2D2D38] rounded-lg p-1 flex items-center justify-center overflow-hidden shadow-inner">
+                      <CustomF1Car
+                        modelo={u.modeloAuto}
+                        diseno={u.disenoAuto}
+                        colores={u.coloresAuto}
+                        className="w-full h-full"
+                      />
+                    </div>
+
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm sm:text-base font-black text-white truncate">
-                          {u.nombre || u.displayName || "Piloto"}
-                        </p>
+                        {u.nombre_escuderia ? (
+                          <p className="text-sm sm:text-base font-black text-white truncate">
+                            {u.nombre_escuderia}
+                          </p>
+                        ) : (
+                          <p className="text-sm sm:text-base font-semibold text-[#8E8E93] italic truncate">
+                            Escudería en Formación
+                          </p>
+                        )}
                         {isCurrentUser && (
                           <span className="text-[10px] font-black uppercase bg-[#E10600] text-white px-2 py-0.5 rounded">
                             Tú
@@ -297,6 +314,9 @@ function RankingContent() {
                         )}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] text-[#8E8E93]">
+                        <span className="text-zinc-400 font-medium">
+                          Piloto: {u.nombre || u.displayName || "Piloto"}
+                        </span>
                         {favDriver && (
                           <span className="inline-flex items-center gap-1">
                             🏎️ {favDriver.nombre}

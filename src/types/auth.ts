@@ -1,5 +1,33 @@
 export type UserRole = "Participante" | "Administrador";
 
+export type CarModelId =
+  | "clasico_fangio"
+  | "retro_senna"
+  | "v10_schumacher"
+  | "actual_2026";
+
+export type CarDesignId =
+  | "diseno_1"
+  | "diseno_2"
+  | "diseno_3"
+  | "diseno_4";
+
+export interface CarColors {
+  colorPrincipal: string; // HEX ej. #E10600
+  colorSecundario: string; // HEX ej. #15151E
+  colorDetalle: string; // HEX ej. #FFFFFF
+}
+
+export const DEFAULT_CAR_CONFIG = {
+  modeloAuto: "actual_2026" as CarModelId,
+  disenoAuto: "diseno_1" as CarDesignId,
+  coloresAuto: {
+    colorPrincipal: "#E10600",
+    colorSecundario: "#15151E",
+    colorDetalle: "#FFFFFF",
+  } as CarColors,
+};
+
 export interface UserProfile {
   uid: string;
   nombre: string | null;
@@ -10,6 +38,10 @@ export interface UserProfile {
   puntaje_global: number;
   piloto_favorito_id: string | null;
   escuderia_favorita_id: string | null;
+  nombre_escuderia?: string | null;
+  modeloAuto?: CarModelId | null;
+  disenoAuto?: CarDesignId | null;
+  coloresAuto?: CarColors | null;
   badges_progress?: Record<string, number>;
   vueltasPerfectas?: number;
   puntosTotales?: number;
