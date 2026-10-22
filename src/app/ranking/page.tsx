@@ -49,10 +49,59 @@ interface UserGpScoreDetail {
 
 interface RankedUserRow {
   profile: UserProfile;
+  puntosHistoricos: number;
+  sumaPuntajesGp: number;
   totalPoints: number;
   predictionsByGp: Record<string, Prediccion>;
   scoresByGp: Record<string, UserGpScoreDetail>;
   isVrWeeklyWinner: boolean;
+}
+
+/**
+ * Extrae los puntos históricos o base guardados en el documento de perfil de Firestore del usuario
+ * (ej. campos 'puntosTotales', 'puntosBase', 'puntos_base', 'puntosHistoricos', etc.)
+ * para reflejar los puntos acumulados previos al inicio del fixture actual (Singapur en adelante).
+ */
+function getPuntosHistoricosUsuario(u: UserProfile): number {
+  const candidatos = [
+    u.puntosTotales,
+    u.puntosBase,
+    u.puntos_base,
+    u.puntosHistoricos,
+    u.puntos_historicos,
+    u.puntos_totales,
+    u.puntaje_historico,
+    u.puntajeHistorico,
+    u.puntosPrevios,
+    u.puntos_previos,
+    u.puntosAnteriores,
+    u.puntos_anteriores,
+    u.puntosAcumulados,
+    u.puntos_acumulados,
+    u.puntos,
+  ];
+
+  let primerNumero: number | null = null;
+
+  for (const valor of candidatos) {
+    let num: number | null = null;
+    if (typeof valor === "number" && !isNaN(valor)) {
+      num = valor;
+    } else if (
+      typeof valor === "string" &&
+      valor.trim() !== "" &&
+      !isNaN(Number(valor))
+    ) {
+      num = Number(valor);
+    }
+
+    if (num !== null) {
+      if (num > 0) return num;
+      if (primerNumero === null) primerNumero = num;
+    }
+  }
+
+  return primerNumero ?? 0;
 }
 
 function RankingContent() {
@@ -108,7 +157,8 @@ function RankingContent() {
           currentCircuitWinner.userId === u.uid;
 
         const scoresByGp: Record<string, UserGpScoreDetail> = {};
-        let totalPoints = 0;
+        const puntosHistoricos = getPuntosHistoricosUsuario(u);
+        let sumaPuntajesGp = 0;
 
         activeGps.forEach((gp) => {
           const pred = userPreds[gp.id];
@@ -150,14 +200,19 @@ function RankingContent() {
             hasPred,
           };
 
-          // Cálculo Global: El 'Puntaje Total' del usuario es estrictamente la suma iterada de sus Puntaje_GP
+          // Suma iterada de Puntaje_GP de las carreras disputadas
           if (typeof puntajeGp === "number") {
-            totalPoints += puntajeGp;
+            sumaPuntajesGp += puntajeGp;
           }
         });
 
+        // Fórmula: Puntaje Total = Puntos Históricos Base (perfil Firestore) + Suma_de_todos_los_Puntajes_GP
+        const totalPoints = puntosHistoricos + sumaPuntajesGp;
+
         return {
           profile: u,
+          puntosHistoricos,
+          sumaPuntajesGp,
           totalPoints,
           predictionsByGp: userPreds,
           scoresByGp,
@@ -386,6 +441,11 @@ function RankingContent() {
                           pts
                         </span>
                       </p>
+                      {row.puntosHistoricos > 0 && (
+                        <p className="text-[10px] font-mono text-zinc-500">
+                          ({row.puntosHistoricos} base + {row.sumaPuntajesGp} GPs)
+                        </p>
+                      )}
                     </div>
                     <div className="p-2 rounded-xl bg-[#15151E] border border-[#2D2D38] text-[#8E8E93]">
                       {isExpanded ? (
@@ -400,9 +460,19 @@ function RankingContent() {
                 {/* Panel desplegable con el desglose detallado por cada Gran Premio */}
                 {isExpanded && (
                   <div className="bg-[#15151E] border-t border-[#2D2D38] p-5 space-y-3">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-[#E10600]">
-                      Desglose de Puntos por Gran Premio
-                    </h4>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-[#E10600]">
+                        Desglose de Puntos por Gran Premio
+                      </h4>
+                      {row.puntosHistoricos > 0 && (
+                        <span className="text-[11px] font-semibold text-amber-300/90 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-lg flex items-center gap-1.5">
+                          <span>Puntos Históricos Base:</span>
+                          <strong className="font-mono text-amber-400">
+                            +{row.puntosHistoricos} pts
+                          </strong>
+                        </span>
+                      )}
+                    </div>
 
                     {(() => {
                       const relevantGps = grandPrixList.filter(
