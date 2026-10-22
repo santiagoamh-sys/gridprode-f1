@@ -1,3 +1,5 @@
+import { INITIAL_GRAND_PRIX } from "@/data/f1InitialData";
+
 export interface CircuitApexConfig {
   id: number; // 1 al 8
   name: string;
@@ -197,3 +199,55 @@ export const currentCircuit: CircuitConfig = {
     },
   ],
 };
+
+/**
+ * Mapeo de configuraciones vectoriales de circuitos por ID de Gran Premio.
+ */
+export const CIRCUITS_BY_GP: Record<string, CircuitConfig> = {
+  "gp-usa-2026": currentCircuit,
+};
+
+/**
+ * Determina dinámicamente el Gran Premio activo para la Vuelta Rápida semanal.
+ * La semana de un GP comienza el lunes y culmina el domingo con el fin de la carrera (con margen post-carrera).
+ * Al comenzar el lunes siguiente, avanza automáticamente al siguiente Gran Premio del calendario.
+ */
+export function getCurrentActiveGpId(now: Date = new Date()): string {
+  const nowMs = now.getTime();
+  const sorted = [...INITIAL_GRAND_PRIX].sort(
+    (a, b) =>
+      new Date(a.carreraStartTime || a.qualyStartTime || 0).getTime() -
+      new Date(b.carreraStartTime || b.qualyStartTime || 0).getTime()
+  );
+
+  const upcoming = sorted.find((gp) => {
+    const timeStr = gp.carreraStartTime || gp.qualyStartTime;
+    if (!timeStr) return false;
+    // 6 horas de margen luego de la largada de la carrera
+    const raceEndMs = new Date(timeStr).getTime() + 6 * 60 * 60 * 1000;
+    return raceEndMs > nowMs;
+  });
+
+  return upcoming ? upcoming.id : sorted[sorted.length - 1].id;
+}
+
+/**
+ * Obtiene la configuración del circuito para el Gran Premio activo de la semana (o el gpId especificado).
+ * Si aún no hay un trazado vectorial individualizado, usa la base vectorial pero aislando el gpId y nombre
+ * para que los registros e intentos semanales inicien en cero para la nueva semana.
+ */
+export function getCurrentCircuit(gpId?: string): CircuitConfig {
+  const targetGpId = gpId || getCurrentActiveGpId();
+  if (CIRCUITS_BY_GP[targetGpId]) {
+    return CIRCUITS_BY_GP[targetGpId];
+  }
+  const gpInfo = INITIAL_GRAND_PRIX.find((g) => g.id === targetGpId);
+  return {
+    ...currentCircuit,
+    id: `${targetGpId}_circuit`,
+    gpId: targetGpId,
+    grandPrix: gpInfo
+      ? `${gpInfo.nombre} • ${gpInfo.circuito}`
+      : currentCircuit.grandPrix,
+  };
+}

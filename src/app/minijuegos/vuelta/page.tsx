@@ -35,13 +35,16 @@ import {
   Zap,
 } from "lucide-react";
 
-import { currentCircuit, type CircuitApexConfig } from "@/data/circuits";
+import { getCurrentCircuit, type CircuitApexConfig, type CircuitConfig } from "@/data/circuits";
 
 const LAP_DURATION_MS = 10000; // 10.0 segundos exactos para la vuelta completa
 const MAX_WEEKLY_ATTEMPTS = 5; // 5 intentos en total por semana (Lunes a Jueves)
 const MAX_POSSIBLE_POINTS = 40; // 8 curvas * 5 pts
 const MISS_PENALTY_MS = 1000; // Penalización en ms para curvas no presionadas o pasadas de largo
-const SEMANA_GP_ID = currentCircuit.gpId; // Ej: "gp-usa-2026"
+
+// Circuito y Gran Premio activo de la semana en curso (se reinicia cada lunes con la nueva carrera del calendario)
+const currentCircuit: CircuitConfig = getCurrentCircuit();
+const SEMANA_GP_ID = currentCircuit.gpId; // ID estructurado por Gran Premio (ej: "gp-usa-2026")
 
 // Dificultad Extrema (Hitbox milimétrica en segundos)
 const TOLERANCE_VIOLETA_S = 0.025; // <= 25ms -> +5 pts

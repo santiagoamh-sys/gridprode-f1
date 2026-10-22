@@ -12,7 +12,6 @@ import {
   getGanadorVueltaRapidaSemanal,
   VueltaRapidaWinner,
 } from "@/lib/firebase/f1Service";
-import { currentCircuit } from "@/data/circuits";
 import { UserProfile } from "@/types/auth";
 import { Prediccion, DesglosePuntos } from "@/types/f1";
 import {
@@ -54,7 +53,6 @@ interface RankedUserRow {
   totalPoints: number;
   predictionsByGp: Record<string, Prediccion>;
   scoresByGp: Record<string, UserGpScoreDetail>;
-  isVrWeeklyWinner: boolean;
 }
 
 function RankingContent() {
@@ -62,8 +60,6 @@ function RankingContent() {
   const { allGrandPrixList, grandPrixList, getPiloto, getEscuderia } =
     useF1Data();
   const [rows, setRows] = useState<RankedUserRow[]>([]);
-  const [weeklyVrWinner, setWeeklyVrWinner] =
-    useState<VueltaRapidaWinner | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
 
@@ -90,12 +86,6 @@ function RankingContent() {
         if (winner) vrWinnersByGp.set(gpId, winner);
       });
 
-      // Ganador semanal del circuito actualmente activo (para el badge general junto al nombre)
-      const currentCircuitWinner =
-        vrWinnersByGp.get(currentCircuit.gpId) ??
-        (await getGanadorVueltaRapidaSemanal(currentCircuit.gpId));
-      setWeeklyVrWinner(currentCircuitWinner);
-
       const predsByUser = new Map<string, Record<string, Prediccion>>();
       preds.forEach((p) => {
         const map = predsByUser.get(p.usuario_id) || {};
@@ -105,9 +95,6 @@ function RankingContent() {
 
       const combined: RankedUserRow[] = users.map((userData) => {
         const userPreds = predsByUser.get(userData.uid) || {};
-        const isVrWeeklyWinner =
-          currentCircuitWinner !== null &&
-          currentCircuitWinner.userId === userData.uid;
 
         const scoresByGp: Record<string, UserGpScoreDetail> = {};
 
@@ -125,25 +112,27 @@ function RankingContent() {
 
           let puntosPronosticos = 0;
           let puntajeGp: number | null = null;
+          const predPts =
+            pred && typeof pred.puntos_totales === "number"
+              ? pred.puntos_totales
+              : null;
 
-          if (pred && typeof pred.puntos_totales === "number") {
-            // Predicción ya calculada y evaluada oficialmente
+          if (predPts !== null) {
+            // Predicción ya calculada y evaluada oficialmente: se suma el +1 de Vuelta Rápida únicamente aquí
             if (alreadyHasVrInPred) {
-              puntosPronosticos = Math.max(0, pred.puntos_totales - 1);
-              puntajeGp = pred.puntos_totales;
+              puntosPronosticos = Math.max(0, predPts - 1);
+              puntajeGp = predPts;
             } else if (wonVr) {
-              puntosPronosticos = pred.puntos_totales;
-              puntajeGp = puntosPronosticos + 1;
+              puntosPronosticos = predPts;
+              puntajeGp = predPts + 1;
             } else {
-              puntosPronosticos = pred.puntos_totales;
-              puntajeGp = puntosPronosticos;
+              puntosPronosticos = predPts;
+              puntajeGp = predPts;
             }
-          } else if (wonVr) {
-            // Carrera pendiente / no puntuada, pero el usuario ganó la Vuelta Rápida
-            puntosPronosticos = 0;
-            puntajeGp = 1;
           } else {
-            // Carrera no puntuada y no ganó VR
+            // La carrera aún no ocurrió o no tiene puntaje base de pronóstico.
+            // NO se suma el punto de Vuelta Rápida al total global todavía (solo se registrará wonVr para el rayo ⚡).
+            puntosPronosticos = 0;
             puntajeGp = null;
           }
 
@@ -155,7 +144,7 @@ function RankingContent() {
             hasPred,
           };
 
-          // Suma iterada de Puntaje_GP de las carreras disputadas
+          // Suma iterada de Puntaje_GP únicamente de las carreras disputadas y evaluadas
           if (typeof puntajeGp === "number") {
             suma_puntos_dinamicos_GP += puntajeGp;
           }
@@ -171,7 +160,6 @@ function RankingContent() {
           totalPoints,
           predictionsByGp: userPreds,
           scoresByGp,
-          isVrWeeklyWinner,
         };
       });
 
@@ -307,15 +295,6 @@ function RankingContent() {
                             Tú
                           </span>
                         )}
-                        {row.isVrWeeklyWinner && (
-                          <span
-                            title={`Ganador Vuelta Rápida Semanal (${weeklyVrWinner?.puntajeTotal ?? 0} pts • ${weeklyVrWinner?.tiempoReaccionTotal ?? 0} ms) • +1 pt extra en GP`}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-emerald-500/15 backdrop-blur-md border border-emerald-400/40 text-emerald-300 text-[10px] sm:text-[11px] font-black uppercase tracking-wider shadow-[0_0_15px_rgba(16,185,129,0.25)]"
-                          >
-                            <Zap className="w-3 h-3 text-emerald-400 fill-current" />
-                            <span>Vuelta Rápida (+1 pt)</span>
-                          </span>
-                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] text-[#8E8E93]">
                         {favDriver && (
@@ -365,7 +344,7 @@ function RankingContent() {
                           }`}
                           title={
                             wonVr
-                              ? `${gp.nombre} • Ganador Vuelta Rápida (+1 pt)${hasScore ? ` • Total GP: ${ptsText}` : ""}`
+                              ? `${gp.nombre} • Vuelta Rápida asegurada (⚡)${hasScore ? ` • Total GP: ${ptsText}` : " • +1 pt se sumará al evaluarse el GP"}`
                               : gp.nombre
                           }
                         >
@@ -474,7 +453,9 @@ function RankingContent() {
                                     {wonVr && (
                                       <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded">
                                         <Zap className="w-2.5 h-2.5 fill-current" />
-                                        <span>VR (+1 pt)</span>
+                                        <span>
+                                          VR {typeof puntajeGp === "number" ? "(+1 pt)" : "(Asegurado ⚡)"}
+                                        </span>
                                       </span>
                                     )}
                                   </div>
@@ -552,9 +533,13 @@ function RankingContent() {
                                       <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded flex items-center justify-between">
                                         <span className="flex items-center gap-1 font-semibold">
                                           <Zap className="w-3 h-3 fill-current" />
-                                          Bono Ganador Vuelta Rápida
+                                          {typeof puntajeGp === "number"
+                                            ? "Bono Ganador Vuelta Rápida"
+                                            : "Bono Vuelta Rápida asegurado (+1 pt al evaluarse el GP)"}
                                         </span>
-                                        <span className="font-mono font-bold">+1 pt</span>
+                                        <span className="font-mono font-bold">
+                                          {typeof puntajeGp === "number" ? "+1 pt" : "Asegurado"}
+                                        </span>
                                       </div>
                                     )}
                                   </div>
@@ -569,9 +554,13 @@ function RankingContent() {
                                       <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded flex items-center justify-between">
                                         <span className="flex items-center gap-1 font-semibold">
                                           <Zap className="w-3 h-3 fill-current" />
-                                          Bono Ganador Vuelta Rápida
+                                          {typeof puntajeGp === "number"
+                                            ? "Bono Ganador Vuelta Rápida"
+                                            : "Bono Vuelta Rápida asegurado (+1 pt al evaluarse el GP)"}
                                         </span>
-                                        <span className="font-mono font-bold">+1 pt</span>
+                                        <span className="font-mono font-bold">
+                                          {typeof puntajeGp === "number" ? "+1 pt" : "Asegurado"}
+                                        </span>
                                       </div>
                                     )}
                                   </div>
@@ -579,9 +568,13 @@ function RankingContent() {
                                   <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded flex items-center justify-between">
                                     <span className="flex items-center gap-1 font-semibold">
                                       <Zap className="w-3 h-3 fill-current" />
-                                      Bono Vuelta Rápida (Sin pronóstico registrado)
+                                      {typeof puntajeGp === "number"
+                                        ? "Bono Vuelta Rápida (Sin pronóstico registrado)"
+                                        : "Bono Vuelta Rápida asegurado (+1 pt al evaluarse el GP)"}
                                     </span>
-                                    <span className="font-mono font-bold">+1 pt</span>
+                                    <span className="font-mono font-bold">
+                                      {typeof puntajeGp === "number" ? "+1 pt" : "Asegurado"}
+                                    </span>
                                   </div>
                                 ) : null}
                               </div>
