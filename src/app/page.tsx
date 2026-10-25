@@ -15,7 +15,7 @@ export default function HomePage() {
         if (!profile?.piloto_favorito_id || !profile?.escuderia_favorita_id) {
           router.replace("/completar-perfil");
         } else {
-          router.replace("/dashboard");
+          router.replace("/inicio");
         }
       } else {
         router.replace("/login");

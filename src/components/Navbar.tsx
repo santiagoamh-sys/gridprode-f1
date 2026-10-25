@@ -49,7 +49,7 @@ export const Navbar: React.FC = () => {
 
   const navLinks = [
     {
-      href: "/dashboard",
+      href: "/inicio",
       label: "Inicio",
       mobileLabel: "Inicio",
       icon: Home,
@@ -98,7 +98,7 @@ export const Navbar: React.FC = () => {
       <header className="sticky top-0 z-40 w-full border-b border-white/10 bg-[#15151E]/90 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
           {/* Extremo Izquierdo: Marca / Logo */}
-          <Link href="/dashboard" className="flex items-center gap-3 shrink-0 group">
+          <Link href="/inicio" className="flex items-center gap-3 shrink-0 group">
             <div className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-[#E10600] text-white shadow-[0_0_15px_rgba(225,6,0,0.35)] group-hover:scale-105 transition-transform">
               <Trophy className="w-4 h-4 text-white" />
             </div>
@@ -123,7 +123,9 @@ export const Navbar: React.FC = () => {
               {navLinks.map((item) => {
                 const Icon = item.icon;
                 const isActive =
-                  pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  pathname === item.href ||
+                  pathname.startsWith(`${item.href}/`) ||
+                  (item.href === "/inicio" && pathname === "/dashboard");
                 return (
                   <Link
                     key={item.href}
@@ -213,7 +215,9 @@ export const Navbar: React.FC = () => {
           <div className="flex items-center justify-around h-16 px-1">
             {navLinks.map((item) => {
               const Icon = item.icon;
-              const isActive = pathname === item.href;
+              const isActive =
+                pathname === item.href ||
+                (item.href === "/inicio" && pathname === "/dashboard");
               return (
                 <Link
                   key={item.href}
