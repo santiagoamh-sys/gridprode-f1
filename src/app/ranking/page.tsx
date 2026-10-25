@@ -5,8 +5,9 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Navbar } from "@/components/Navbar";
 import { useAuth } from "@/context/AuthContext";
 import { useF1Data, filterGrandPrixFromSingapore } from "@/context/F1DataContext";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
 import {
-  getAllUsuariosRanking,
   getAllPredicciones,
   getGrandPrixList,
   getGanadorVueltaRapidaSemanal,
@@ -49,12 +50,16 @@ interface UserGpScoreDetail {
 
 interface RankedUserRow {
   profile: UserProfile;
+  base: number;
   puntosBase: number;
+  gps: number;
   puntosGPs: number;
   sumaPuntajesGp?: number;
+  total: number;
   totalPoints: number;
   predictionsByGp: Record<string, Prediccion>;
   scoresByGp: Record<string, UserGpScoreDetail>;
+  [key: string]: any;
 }
 
 function RankingContent() {
@@ -68,8 +73,23 @@ function RankingContent() {
   const loadLeaderboard = async () => {
     try {
       setLoading(true);
-      const [users, preds, allGps] = await Promise.all([
-        getAllUsuariosRanking(),
+
+      // PASO 1: Fetch de Usuarios Primero: Haz un getDocs a la colección users.
+      if (!db) {
+        console.error("Firestore no está inicializado");
+        return;
+      }
+      const usersSnap = await getDocs(collection(db, "users"));
+      const usersDataList: UserProfile[] = usersSnap.docs.map((docSnap) => {
+        const d = docSnap.data();
+        return {
+          ...d,
+          uid: d.uid || docSnap.id,
+        } as UserProfile;
+      });
+
+      // PASO 2: Fetch de Predicciones Segundo: Luego, obtén las predicciones/resultados.
+      const [preds, allGps] = await Promise.all([
         getAllPredicciones(),
         getGrandPrixList(),
       ]);
@@ -95,13 +115,16 @@ function RankingContent() {
         predsByUser.set(p.usuario_id, map);
       });
 
-      const combined: RankedUserRow[] = users.map((userData) => {
+      // Mapea todos los usuarios y extrae explícitamente su base
+      const combined: RankedUserRow[] = usersDataList.map((userData) => {
         const userPreds = predsByUser.get(userData.uid) || {};
-
         const scoresByGp: Record<string, UserGpScoreDetail> = {};
 
-        // Extraer única y estrictamente el valor del campo puntaje_global del documento del usuario en users
+        // Prohibición Estricta: puntosBase jamás debe reasignarse ni calcularse a partir de las predicciones.
+        // Su único origen de verdad es el campo puntaje_global del documento del usuario.
         const puntosBase = Number(userData.puntaje_global) || 0;
+
+        // Suma los puntos de los Grandes Premios (incluyendo Vuelta Rápida) solo en una variable separada llamada puntosGPs
         let puntosGPs = 0;
 
         activeGps.forEach((gp) => {
@@ -133,7 +156,6 @@ function RankingContent() {
             }
           } else {
             // La carrera aún no ocurrió o no tiene puntaje base de pronóstico.
-            // NO se suma el punto de Vuelta Rápida al total global todavía (solo se registrará wonVr para el rayo ⚡).
             puntosPronosticos = 0;
             puntajeGp = null;
           }
@@ -152,22 +174,35 @@ function RankingContent() {
           }
         });
 
-        // Fórmula del puntaje final estrictamente: Puntaje Total = puntosBase + puntosGPs
-        const totalPoints = puntosBase + puntosGPs;
-
-        return {
-          profile: userData,
+        // Debugging Obligatorio solicitado
+        console.log(
+          'Leaderboard Calc -> Usuario:',
+          userData.nombre,
+          '| Base DB:',
           puntosBase,
+          '| Suma GPs:',
+          puntosGPs
+        );
+
+        // Cálculo Final: El objeto que devuelves para el sort debe ser:
+        // { ...userData, base: puntosBase, gps: puntosGPs, total: puntosBase + puntosGPs }
+        return {
+          ...userData,
+          profile: userData,
+          base: puntosBase,
+          puntosBase,
+          gps: puntosGPs,
           puntosGPs,
           sumaPuntajesGp: puntosGPs,
-          totalPoints,
+          total: puntosBase + puntosGPs,
+          totalPoints: puntosBase + puntosGPs,
           predictionsByGp: userPreds,
           scoresByGp,
         };
       });
 
-      // Asegurar que el ordenamiento (sort) del Leaderboard utilice este nuevo Puntaje Total combinado
-      combined.sort((a, b) => b.totalPoints - a.totalPoints);
+      // El sort de la tabla debe ser estrictamente por total
+      combined.sort((a, b) => b.total - a.total);
       setRows(combined);
     } catch (err) {
       console.error("Error al cargar ranking global:", err);
@@ -393,22 +428,22 @@ function RankingContent() {
                         Puntos Totales
                       </p>
                       <p className="text-xl font-black font-mono text-amber-400">
-                        {row.totalPoints}{" "}
+                        {row.total}{" "}
                         <span className="text-xs font-normal text-[#8E8E93]">
                           pts
                         </span>
                       </p>
-                      {row.puntosBase > 0 && row.puntosGPs > 0 ? (
+                      {row.base > 0 && row.gps > 0 ? (
                         <p className="text-[10px] font-mono text-zinc-500">
-                          ({row.puntosBase} base + {row.puntosGPs} GPs)
+                          ({row.base} base + {row.gps} GPs)
                         </p>
-                      ) : row.puntosBase > 0 ? (
+                      ) : row.base > 0 ? (
                         <p className="text-[10px] font-mono text-zinc-500">
-                          ({row.puntosBase} base)
+                          ({row.base} base)
                         </p>
                       ) : (
                         <p className="text-[10px] font-mono text-zinc-500">
-                          ({row.puntosGPs} GPs)
+                          ({row.gps} GPs)
                         </p>
                       )}
                     </div>
@@ -430,18 +465,18 @@ function RankingContent() {
                         Desglose de Puntos por Gran Premio
                       </h4>
                       <div className="flex items-center gap-2">
-                        {row.puntosBase > 0 && (
+                        {row.base > 0 && (
                           <span className="text-[11px] font-semibold text-amber-300/90 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-lg flex items-center gap-1.5">
                             <span>Puntos Base Previos:</span>
                             <strong className="font-mono text-amber-400">
-                              +{row.puntosBase} pts
+                              +{row.base} pts
                             </strong>
                           </span>
                         )}
                         <span className="text-[11px] font-semibold text-zinc-300 bg-[#252530] border border-[#3D3D4E] px-2.5 py-0.5 rounded-lg flex items-center gap-1.5">
                           <span>Puntos GPs:</span>
                           <strong className="font-mono text-white">
-                            +{row.puntosGPs} pts
+                            +{row.gps} pts
                           </strong>
                         </span>
                       </div>
