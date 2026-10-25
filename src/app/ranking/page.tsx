@@ -50,12 +50,14 @@ interface UserGpScoreDetail {
 
 interface RankedUserRow {
   profile: UserProfile;
+  puntos_base: number;
+  puntos_gps: number;
+  total: number;
   base: number;
-  puntosBase: number;
   gps: number;
+  puntosBase: number;
   puntosGPs: number;
   sumaPuntajesGp?: number;
-  total: number;
   totalPoints: number;
   predictionsByGp: Record<string, Prediccion>;
   scoresByGp: Record<string, UserGpScoreDetail>;
@@ -115,17 +117,18 @@ function RankingContent() {
         predsByUser.set(p.usuario_id, map);
       });
 
-      // Mapea todos los usuarios y extrae explícitamente su base
+      // Mapea todos los usuarios y extrae explícitamente su base desde puntos_base (Number)
+      // Se ignora por completo el antiguo campo puntaje_global
       const combined: RankedUserRow[] = usersDataList.map((userData) => {
         const userPreds = predsByUser.get(userData.uid) || {};
         const scoresByGp: Record<string, UserGpScoreDetail> = {};
 
-        // Prohibición Estricta: puntosBase jamás debe reasignarse ni calcularse a partir de las predicciones.
-        // Su único origen de verdad es el campo puntaje_global del documento del usuario.
-        const puntosBase = Number(userData.puntaje_global) || 0;
+        // Nuevo Esquema en users: A partir de ahora, el puntaje histórico se lee desde puntos_base (Number).
+        // Se ignora por completo el antiguo campo puntaje_global.
+        const puntos_base = Number(userData.puntos_base) || 0;
 
-        // Suma los puntos de los Grandes Premios (incluyendo Vuelta Rápida) solo en una variable separada llamada puntosGPs
-        let puntosGPs = 0;
+        // Puntos Dinámicos: Suma los resultados evaluados de los Grandes Premios (incluyendo el +1 de Vuelta Rápida) en puntos_gps
+        let puntos_gps = 0;
 
         activeGps.forEach((gp) => {
           const pred = userPreds[gp.id];
@@ -170,38 +173,43 @@ function RankingContent() {
 
           // Suma iterada de Puntaje_GP únicamente de las carreras disputadas y evaluadas
           if (typeof puntajeGp === "number") {
-            puntosGPs += puntajeGp;
+            puntos_gps += puntajeGp;
           }
         });
 
-        // Debugging Obligatorio solicitado
+        // Fórmula Estricta: El Total General para ordenar el Leaderboard debe ser estrictamente Total = puntos_base + puntos_gps
+        const total = puntos_base + puntos_gps;
+
+        // Debugging
         console.log(
           'Leaderboard Calc -> Usuario:',
-          userData.nombre,
-          '| Base DB:',
-          puntosBase,
-          '| Suma GPs:',
-          puntosGPs
+          userData.nombre || userData.displayName,
+          '| Base DB (puntos_base):',
+          puntos_base,
+          '| Suma GPs (puntos_gps):',
+          puntos_gps,
+          '| Total:',
+          total
         );
 
-        // Cálculo Final: El objeto que devuelves para el sort debe ser:
-        // { ...userData, base: puntosBase, gps: puntosGPs, total: puntosBase + puntosGPs }
         return {
           ...userData,
           profile: userData,
-          base: puntosBase,
-          puntosBase,
-          gps: puntosGPs,
-          puntosGPs,
-          sumaPuntajesGp: puntosGPs,
-          total: puntosBase + puntosGPs,
-          totalPoints: puntosBase + puntosGPs,
+          puntos_base,
+          puntos_gps,
+          total,
+          base: puntos_base,
+          puntosBase: puntos_base,
+          gps: puntos_gps,
+          puntosGPs: puntos_gps,
+          sumaPuntajesGp: puntos_gps,
+          totalPoints: total,
           predictionsByGp: userPreds,
           scoresByGp,
         };
       });
 
-      // El sort de la tabla debe ser estrictamente por total
+      // El Total General para ordenar el Leaderboard debe ser estrictamente Total = puntos_base + puntos_gps
       combined.sort((a, b) => b.total - a.total);
       setRows(combined);
     } catch (err) {
@@ -433,19 +441,10 @@ function RankingContent() {
                           pts
                         </span>
                       </p>
-                      {row.base > 0 && row.gps > 0 ? (
-                        <p className="text-[10px] font-mono text-zinc-500">
-                          ({row.base} base + {row.gps} GPs)
-                        </p>
-                      ) : row.base > 0 ? (
-                        <p className="text-[10px] font-mono text-zinc-500">
-                          ({row.base} base)
-                        </p>
-                      ) : (
-                        <p className="text-[10px] font-mono text-zinc-500">
-                          ({row.gps} GPs)
-                        </p>
-                      )}
+                      {/* Texto gris del Leaderboard: {puntos_base} base + {puntos_gps} GPs */}
+                      <p className="text-[10px] font-mono text-zinc-500">
+                        {row.puntos_base} base + {row.puntos_gps} GPs
+                      </p>
                     </div>
                     <div className="p-2 rounded-xl bg-[#15151E] border border-[#2D2D38] text-[#8E8E93]">
                       {isExpanded ? (
@@ -465,18 +464,16 @@ function RankingContent() {
                         Desglose de Puntos por Gran Premio
                       </h4>
                       <div className="flex items-center gap-2">
-                        {row.base > 0 && (
-                          <span className="text-[11px] font-semibold text-amber-300/90 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-lg flex items-center gap-1.5">
-                            <span>Puntos Base Previos:</span>
-                            <strong className="font-mono text-amber-400">
-                              +{row.base} pts
-                            </strong>
-                          </span>
-                        )}
+                        <span className="text-[11px] font-semibold text-amber-300/90 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-lg flex items-center gap-1.5">
+                          <span>Puntos Base:</span>
+                          <strong className="font-mono text-amber-400">
+                            +{row.puntos_base} pts
+                          </strong>
+                        </span>
                         <span className="text-[11px] font-semibold text-zinc-300 bg-[#252530] border border-[#3D3D4E] px-2.5 py-0.5 rounded-lg flex items-center gap-1.5">
                           <span>Puntos GPs:</span>
                           <strong className="font-mono text-white">
-                            +{row.gps} pts
+                            +{row.puntos_gps} pts
                           </strong>
                         </span>
                       </div>

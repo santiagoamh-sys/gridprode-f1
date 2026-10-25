@@ -83,10 +83,10 @@ export const UserProfileCard: React.FC = () => {
             </div>
             <div>
               <p className="text-[10px] text-[#8E8E93] uppercase tracking-wider font-semibold">
-                Puntaje Global
+                Puntos Base
               </p>
               <p className="text-lg font-black text-amber-400 leading-none">
-                {profile?.puntaje_global ?? 0}{" "}
+                {profile?.puntos_base ?? 0}{" "}
                 <span className="text-xs font-normal text-[#8E8E93]">pts</span>
               </p>
             </div>
