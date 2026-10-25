@@ -54,6 +54,7 @@ export interface UserProfile {
   puntajeHistorico?: number;
   puntosPrevios?: number;
   puntos_previos?: number;
+  puntos_pronosticos_gp?: number;
   createdAt?: any;
   lastLoginAt?: any;
   [key: string]: any;

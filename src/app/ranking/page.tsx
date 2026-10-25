@@ -50,7 +50,8 @@ interface UserGpScoreDetail {
 interface RankedUserRow {
   profile: UserProfile;
   puntosBase: number;
-  sumaPuntajesGp: number;
+  puntosGPs: number;
+  sumaPuntajesGp?: number;
   totalPoints: number;
   predictionsByGp: Record<string, Prediccion>;
   scoresByGp: Record<string, UserGpScoreDetail>;
@@ -99,9 +100,9 @@ function RankingContent() {
 
         const scoresByGp: Record<string, UserGpScoreDetail> = {};
 
-        // Extraer explícitamente el campo puntaje_global del documento de cada usuario en la colección users
+        // Extraer única y estrictamente el valor del campo puntaje_global del documento del usuario en users
         const puntosBase = Number(userData.puntaje_global) || 0;
-        let suma_puntos_dinamicos_GP = 0;
+        let puntosGPs = 0;
 
         activeGps.forEach((gp) => {
           const pred = userPreds[gp.id];
@@ -147,17 +148,18 @@ function RankingContent() {
 
           // Suma iterada de Puntaje_GP únicamente de las carreras disputadas y evaluadas
           if (typeof puntajeGp === "number") {
-            suma_puntos_dinamicos_GP += puntajeGp;
+            puntosGPs += puntajeGp;
           }
         });
 
-        // Fórmula del puntaje final estrictamente: Puntaje Total = puntosBase + suma_puntos_dinamicos_GP
-        const totalPoints = puntosBase + suma_puntos_dinamicos_GP;
+        // Fórmula del puntaje final estrictamente: Puntaje Total = puntosBase + puntosGPs
+        const totalPoints = puntosBase + puntosGPs;
 
         return {
           profile: userData,
           puntosBase,
-          sumaPuntajesGp: suma_puntos_dinamicos_GP,
+          puntosGPs,
+          sumaPuntajesGp: puntosGPs,
           totalPoints,
           predictionsByGp: userPreds,
           scoresByGp,
@@ -396,9 +398,17 @@ function RankingContent() {
                           pts
                         </span>
                       </p>
-                      {row.puntosBase > 0 && (
+                      {row.puntosBase > 0 && row.puntosGPs > 0 ? (
                         <p className="text-[10px] font-mono text-zinc-500">
-                          ({row.puntosBase} base + {row.sumaPuntajesGp} GPs)
+                          ({row.puntosBase} base + {row.puntosGPs} GPs)
+                        </p>
+                      ) : row.puntosBase > 0 ? (
+                        <p className="text-[10px] font-mono text-zinc-500">
+                          ({row.puntosBase} base)
+                        </p>
+                      ) : (
+                        <p className="text-[10px] font-mono text-zinc-500">
+                          ({row.puntosGPs} GPs)
                         </p>
                       )}
                     </div>
@@ -419,14 +429,22 @@ function RankingContent() {
                       <h4 className="text-xs font-black uppercase tracking-wider text-[#E10600]">
                         Desglose de Puntos por Gran Premio
                       </h4>
-                      {row.puntosBase > 0 && (
-                        <span className="text-[11px] font-semibold text-amber-300/90 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-lg flex items-center gap-1.5">
-                          <span>Puntos Base Previos:</span>
-                          <strong className="font-mono text-amber-400">
-                            +{row.puntosBase} pts
+                      <div className="flex items-center gap-2">
+                        {row.puntosBase > 0 && (
+                          <span className="text-[11px] font-semibold text-amber-300/90 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-lg flex items-center gap-1.5">
+                            <span>Puntos Base Previos:</span>
+                            <strong className="font-mono text-amber-400">
+                              +{row.puntosBase} pts
+                            </strong>
+                          </span>
+                        )}
+                        <span className="text-[11px] font-semibold text-zinc-300 bg-[#252530] border border-[#3D3D4E] px-2.5 py-0.5 rounded-lg flex items-center gap-1.5">
+                          <span>Puntos GPs:</span>
+                          <strong className="font-mono text-white">
+                            +{row.puntosGPs} pts
                           </strong>
                         </span>
-                      )}
+                      </div>
                     </div>
 
                     {(() => {

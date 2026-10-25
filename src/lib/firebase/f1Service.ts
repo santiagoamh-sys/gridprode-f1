@@ -435,7 +435,7 @@ export async function guardarResultadosYCalcularPuntajes(
     totalPorUsuario.set(pred.usuario_id, prevTotal + puntosDeEstaPred);
   }
 
-  // 3. Actualizar puntaje_global de cada usuario en la colección `users`
+  // 3. Actualizar resumen de pronósticos en cada usuario sin sobrescribir su puntaje_global histórico
   const resumenUsuarios: Array<{
     usuario_id: string;
     puntos_gp: number;
@@ -447,7 +447,7 @@ export async function guardarResultadosYCalcularPuntajes(
     batch.set(
       userRef,
       {
-        puntaje_global: nuevoTotal,
+        puntos_pronosticos_gp: nuevoTotal,
         updatedAt: serverTimestamp(),
       },
       { merge: true }
