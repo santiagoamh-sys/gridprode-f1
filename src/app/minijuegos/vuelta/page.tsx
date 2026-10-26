@@ -46,6 +46,12 @@ import {
   getCurrentActiveGpId,
   type CircuitTrackConfig,
 } from "@/utils/trackCoordinates";
+import {
+  computeCurvatureSpeedProfile,
+  getProgressFromTime,
+  getTimeFromProgress,
+  type CurvatureSpeedProfile,
+} from "@/utils/trackPhysics";
 
 const LAP_DURATION_MS = 10000; // 10.0 segundos exactos para la vuelta completa
 const MAX_WEEKLY_ATTEMPTS = 5; // 5 intentos en total por semana (Lunes a Jueves)
@@ -226,6 +232,7 @@ function VueltaRapidaContent() {
   const dotCoreRef = useRef<SVGCircleElement | null>(null);
   const timerDisplayRef = useRef<HTMLSpanElement | null>(null);
   const calibratedApexesRef = useRef<CircuitApexConfig[]>([]);
+  const curvatureProfileRef = useRef<CurvatureSpeedProfile | null>(null);
   const [pathNodeReady, setPathNodeReady] = useState<number>(0);
 
   // Waypoints precalculados para la física de velocidad variable (Largada -> 8 APEX -> Meta)
@@ -292,7 +299,12 @@ function VueltaRapidaContent() {
       totalPathLengthRef.current = totalLen;
 
       if (totalLen > 0) {
-        // Muestreo denso global de 1000 puntos a lo largo del path SVG
+        // 1. Evaluación dinámica de curvatura del SVG (Independiente de los APEX):
+        // Analiza tangentes, cambio de ángulo, desaceleración en curvas y aceleración en rectas
+        const profile = computeCurvatureSpeedProfile(pathEl, LAP_DURATION_MS, 600);
+        curvatureProfileRef.current = profile;
+
+        // 2. Muestreo denso global de 1000 puntos para proyectar cada APEX sobre el trazado oficial
         const SAMPLES = 1000;
         const sampledPoints: Array<{ p: number; x: number; y: number }> = [];
         for (let s = 0; s <= SAMPLES; s++) {
@@ -301,13 +313,13 @@ function VueltaRapidaContent() {
           sampledPoints.push({ p, x: pt.x, y: pt.y });
         }
 
-        // Mapeo dinámico de hit zones para cada APEX del circuito activo
+        // 3. Mapeo de APEX y calibración de tiempos ideales según la física real de la pista
         const calibratedApexes: CircuitApexConfig[] = carreraActiva.apexes.map(
           (ap) => {
             let bestP = ap.progress ?? 0;
             let minSq = Infinity;
 
-            // 1. Búsqueda global a lo largo de toda la pista oficial
+            // Búsqueda global del progreso más cercano al punto (x, y) del APEX
             for (let i = 0; i < sampledPoints.length; i++) {
               const sp = sampledPoints[i];
               const dx = sp.x - ap.x;
@@ -319,7 +331,7 @@ function VueltaRapidaContent() {
               }
             }
 
-            // 2. Refinamiento fino local (±0.02 con 50 pasos) para máxima precisión
+            // Refinamiento fino local (±0.02 con 50 pasos) para máxima precisión
             const localSteps = 50;
             const searchHalfWidth = 0.02;
             const minSearch = Math.max(0, bestP - searchHalfWidth);
@@ -336,8 +348,8 @@ function VueltaRapidaContent() {
               }
             }
 
-            const idealTimeMs =
-              ap.idealTimeMs || Math.round(bestP * LAP_DURATION_MS);
+            // El idealTimeMs se calcula directamente del perfil de físicas por curvatura
+            const idealTimeMs = getTimeFromProgress(profile, bestP);
 
             return {
               ...ap,
@@ -348,7 +360,7 @@ function VueltaRapidaContent() {
           }
         );
 
-        // Ordenar los waypoints por progreso para garantizar la monotonicidad física de Hermite
+        // Ordenar los waypoints por progreso para garantizar la monotonicidad física
         const sortedApexes = [...calibratedApexes].sort(
           (a, b) => a.progress - b.progress
         );
@@ -949,17 +961,17 @@ function VueltaRapidaContent() {
         timerDisplayRef.current.textContent = `${(clampedElapsed / 1000).toFixed(2)}s / 10.00s`;
       }
 
-      // Calcular posición con físicas de F1 (rápido en rectas, frenada intensa antes de cada APEX)
+      // Calcular posición mediante física F1 basada en curvatura (Curvature-based speed)
       const currentPath = trackPathRef.current;
       const totalLen =
         totalPathLengthRef.current ||
         (currentPath ? currentPath.getTotalLength() : 0);
 
       if (currentPath && totalLen > 0) {
-        const variableProgress = computeF1VariableProgress(
-          clampedElapsed,
-          waypointsRef.current
-        );
+        const profile = curvatureProfileRef.current;
+        const variableProgress = profile
+          ? getProgressFromTime(profile, clampedElapsed)
+          : computeF1VariableProgress(clampedElapsed, waypointsRef.current);
         const pt = currentPath.getPointAtLength(variableProgress * totalLen);
         setDotDomPosition(pt.x, pt.y);
       }
