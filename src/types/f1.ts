@@ -144,6 +144,7 @@ export interface DesglosePuntos {
 export interface Prediccion {
   id: string; // ${usuario_id}_${grand_prix_id}
   usuario_id: string;
+  userId?: string;
   grand_prix_id: string;
   respuestas: RespuestasPrediccion;
   puntos_totales?: number;

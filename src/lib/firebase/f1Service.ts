@@ -190,6 +190,7 @@ export async function guardarPrediccion(
   const prediccionData: Prediccion = {
     id,
     usuario_id: usuarioId,
+    userId: usuarioId,
     grand_prix_id: grandPrixId,
     respuestas,
     updatedAt: serverTimestamp(),

@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase/config";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, collection, query, where, getDocs, updateDoc } from "firebase/firestore";
+import { useF1Data } from "@/context/F1DataContext";
+import { Prediccion } from "@/types/f1";
 import {
   BADGES_DATA,
   BadgeDefinition,
@@ -37,11 +39,100 @@ interface SelectedBadgeItem {
 
 export const Premios: React.FC = () => {
   const { user, profile, refreshProfile } = useAuth();
+  const { grandPrixList, allGrandPrixList } = useF1Data();
   const [liveBadgesProgress, setLiveBadgesProgress] = useState<Record<string, number> | null>(null);
+  const [userPredictions, setUserPredictions] = useState<Prediccion[]>([]);
+  const [consecutiveStreak, setConsecutiveStreak] = useState<number>(0);
+  const [loadingPredictions, setLoadingPredictions] = useState<boolean>(true);
   const [activeFilter, setActiveFilter] = useState<FilterCategory>("todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [selectedBadge, setSelectedBadge] = useState<SelectedBadgeItem | null>(null);
+
+  // Consulta a la colección predicciones filtrando estrictamente por el usuario autenticado
+  const fetchUserPredictionsAndCalculateStreak = async () => {
+    if (!db || !user?.uid) {
+      setUserPredictions([]);
+      setConsecutiveStreak(0);
+      setLoadingPredictions(false);
+      return;
+    }
+
+    try {
+      setLoadingPredictions(true);
+      const predsRef = collection(db, "predicciones");
+
+      // Filtrado Obligatorio por Usuario: incluye estrictamente where('userId', '==', user.uid)
+      // y where('usuario_id', '==', user.uid) para asegurar compatibilidad total
+      const qUserId = query(predsRef, where("userId", "==", user.uid));
+      const qUsuarioId = query(predsRef, where("usuario_id", "==", user.uid));
+
+      const [snapUserId, snapUsuarioId] = await Promise.all([
+        getDocs(qUserId).catch(() => null),
+        getDocs(qUsuarioId).catch(() => null),
+      ]);
+
+      const predsMap = new Map<string, Prediccion>();
+      snapUserId?.docs.forEach((d) => predsMap.set(d.id, d.data() as Prediccion));
+      snapUsuarioId?.docs.forEach((d) => predsMap.set(d.id, d.data() as Prediccion));
+
+      const userPreds = Array.from(predsMap.values());
+      setUserPredictions(userPreds);
+
+      // Asistencia Perfecta: Ordena las predicciones del usuario por ronda/fecha.
+      // Implementa un contador que sume participaciones consecutivas y se reinicie a 0 si detecta que el usuario no pronosticó en un GP finalizado.
+      const gpList =
+        grandPrixList && grandPrixList.length > 0 ? grandPrixList : allGrandPrixList;
+      const sortedGps = [...gpList].sort(
+        (a, b) =>
+          (a.ronda || 0) - (b.ronda || 0) ||
+          new Date(a.qualyStartTime || 0).getTime() -
+            new Date(b.qualyStartTime || 0).getTime()
+      );
+
+      const userPredsByGpId = new Set(userPreds.map((p) => p.grand_prix_id));
+      const nowMs = Date.now();
+      let streak = 0;
+
+      for (const gp of sortedGps) {
+        const gpTime = new Date(gp.carreraStartTime || gp.qualyStartTime).getTime();
+        const isFinished =
+          gp.estado === "finalizado" ||
+          (gpTime > 0 && gpTime + 6 * 3600 * 1000 < nowMs);
+        const hasPred = userPredsByGpId.has(gp.id);
+
+        if (isFinished) {
+          if (hasPred) {
+            streak++;
+          } else {
+            // Se reinicia a 0 si detecta que el usuario no pronosticó en un GP finalizado
+            streak = 0;
+          }
+        } else if (hasPred) {
+          // Si la carrera aún no finalizó (en curso o próxima) pero el usuario ya pronosticó, suma a la racha
+          streak++;
+        }
+      }
+
+      setConsecutiveStreak(streak);
+
+      // Sincronizar en Firestore para mantener coherencia en todo el perfil
+      const userRef = doc(db, "users", user.uid);
+      updateDoc(userRef, {
+        "badges_progress.asistencia_perfecta": streak,
+      }).catch((err) => {
+        console.warn("No se pudo actualizar badges_progress.asistencia_perfecta en Firestore:", err);
+      });
+    } catch (err) {
+      console.error("Error al obtener predicciones del usuario para trofeos:", err);
+    } finally {
+      setLoadingPredictions(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUserPredictionsAndCalculateStreak();
+  }, [user?.uid, grandPrixList, allGrandPrixList]);
 
   // Escuchar actualizaciones en tiempo real de Firestore para badges_progress si el usuario está autenticado
   useEffect(() => {
@@ -74,26 +165,43 @@ export const Premios: React.FC = () => {
     return () => unsubscribe();
   }, [user?.uid]);
 
-  // Consumir badges_progress desde el Auth Context (con fallback a la escucha en vivo)
+  // Consumir badges_progress desde el Auth Context (con fallback a la escucha en vivo),
+  // aplicando estrictamente el cálculo real de asistencia_perfecta y suprimiendo mocks
   const currentBadgesProgress: Record<string, number> = useMemo(() => {
-    if (liveBadgesProgress) {
-      return liveBadgesProgress;
-    }
-    const base = profile?.badges_progress || {};
+    const base = liveBadgesProgress || profile?.badges_progress || {};
     const perfectLaps =
       typeof profile?.vueltasPerfectas === "number"
         ? profile.vueltasPerfectas
         : base.vueltas_perfectas ?? 0;
-    return {
+
+    const realBadges: Record<string, number> = {
       ...base,
       vueltas_perfectas: Math.max(base.vueltas_perfectas ?? 0, perfectLaps),
+      asistencia_perfecta: consecutiveStreak,
     };
-  }, [liveBadgesProgress, profile?.badges_progress, profile?.vueltasPerfectas]);
+
+    // Datos Reales: Elimina cualquier progreso hardcodeado o mock y utiliza la longitud real del array de predicciones filtradas
+    if (userPredictions.length === 0) {
+      realBadges.asistencia_perfecta = 0;
+      realBadges.ojo_clinico = 0;
+      realBadges.el_estratega = 0;
+      realBadges.oraculo_del_caos = 0;
+      realBadges.rey_del_sabado = 0;
+      realBadges.pulso_argento = 0;
+      realBadges.contra_la_corriente = 0;
+      realBadges.pleno_perfecto = 0;
+    }
+
+    return realBadges;
+  }, [liveBadgesProgress, profile?.badges_progress, profile?.vueltasPerfectas, consecutiveStreak, userPredictions.length]);
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
     try {
-      await refreshProfile();
+      await Promise.all([
+        refreshProfile(),
+        fetchUserPredictionsAndCalculateStreak(),
+      ]);
     } catch (err) {
       console.error("Error al refrescar perfil:", err);
     } finally {
