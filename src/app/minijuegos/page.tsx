@@ -76,7 +76,7 @@ export default function MinijuegosHubPage() {
         title: "Vuelta Rápida",
         subtitle: `Precisión en Apex • ${carreraActiva?.nombre || "Gran Premio"}`,
         description: `Domina los APEX de ${carreraActiva?.circuito || carreraActiva?.nombre || "la pista oficial"} en una vuelta lanzada de 10 segundos. Disponible de lunes a jueves con 5 intentos por semana.`,
-        href: "/minijuegos/vuelta",
+        href: carreraActiva ? `/minijuegos/vuelta?gp=${carreraActiva.id}` : "/minijuegos/vuelta",
         icon: Gauge,
         badgeIcon: Flag,
         badgeText: "5 intentos / semana",

@@ -21,29 +21,23 @@ export interface CircuitConfig {
   name: string;
   grandPrix: string;
   viewBox: string;
+  direction?: "Horario" | "Antihorario";
   startPoint: { x: number; y: number; angleDeg: number };
   pathD: string;
   apexes: CircuitApexConfig[];
 }
 
 /**
- * Silueta vectorial oficial del Circuito de las Américas (Austin - COTA),
- * parametrizada en sentido ANTIHORARIO (counter-clockwise) comenzando en la
- * línea de Largada/Meta (148.46, 430.53) sobre la recta principal:
- * - Largada/Meta (148.46, 430.53) -> subida hacia la horquilla de la Curva 1 (264.31, 456.62)
- * - Secuencia enlazada de Las Esses (Curvas 2 a 9 subiendo hacia el noreste)
- * - Horquilla aguda de la Curva 11 en el extremo superior derecho (463.20, 42.55)
- * - Larga recta opuesta diagonal bajando hacia la Curva 12 (172.44, 236.04)
- * - Sector interno del Estadio (Curvas 13 a 15 en 150.53, 270.17)
- * - Carrusel de la Torre (Triple derecha Curvas 16-18 en 197.44, 338.50)
- * - Curva 19 y Curva 20 final (35.38, 392.69) desembocando en la recta principal.
+ * Silueta vectorial oficial del Circuito de las Américas (Austin - COTA)
+ * Sentido: Antihorario
  */
-export const currentCircuit: CircuitConfig = {
+export const austinCircuit: CircuitConfig = {
   id: "austin_cota_2026",
   gpId: "gp-usa-2026",
   name: "Circuito de las Américas (COTA)",
   grandPrix: "GP de Estados Unidos • Austin",
   viewBox: "8 14 484 468",
+  direction: "Antihorario",
   startPoint: { x: 148.46, y: 430.53, angleDeg: 16 },
   pathD:
     "M 148.455 430.529 " +
@@ -201,10 +195,286 @@ export const currentCircuit: CircuitConfig = {
 };
 
 /**
+ * Silueta vectorial oficial del Autódromo Hermanos Rodríguez (México)
+ * Sentido: Horario
+ */
+export const mexicoCircuit: CircuitConfig = {
+  id: "mexico_hermanos_rodriguez_2026",
+  gpId: "gp-mexico-2026",
+  name: "Autódromo Hermanos Rodríguez",
+  grandPrix: "GP de la Ciudad de México • Autódromo Hermanos Rodríguez",
+  viewBox: "0 10 540 440",
+  direction: "Horario",
+  startPoint: { x: 230, y: 395, angleDeg: 0 },
+  pathD:
+    "M 120 395 " +
+    "L 445 395 " +
+    "c 12 0 22 -8 22 -20 " +
+    "l 0 -45 " +
+    "c 0 -14 -10 -22 -22 -22 " +
+    "l -30 0 " +
+    "c -12 0 -20 -10 -20 -22 " +
+    "l 0 -90 " +
+    "c 0 -16 -12 -26 -26 -26 " +
+    "l -55 0 " +
+    "c -16 0 -26 12 -26 26 " +
+    "l 0 35 " +
+    "c 0 16 12 26 26 26 " +
+    "l 65 0 " +
+    "c 16 0 26 -12 26 -26 " +
+    "l 0 -30 " +
+    "c 0 -16 -12 -26 -26 -26 " +
+    "l -55 0 " +
+    "c -16 0 -26 -12 -26 -26 " +
+    "l 0 -20 " +
+    "c 0 -16 -12 -26 -26 -26 " +
+    "l -85 0 " +
+    "c -20 0 -35 15 -35 35 " +
+    "l 0 115 " +
+    "c 0 20 -16 35 -35 35 " +
+    "l -30 0 " +
+    "c -20 0 -35 15 -35 35 " +
+    "l 0 45 " +
+    "c 0 25 20 45 45 45 " +
+    "L 120 395 Z",
+  apexes: [
+    {
+      id: 1,
+      name: "Curva 1 (Moisés Solana)",
+      x: 467,
+      y: 365,
+      progress: 0.165,
+      idealTime: 1.65,
+      idealTimeMs: 1650,
+      labelOffsetX: 38,
+      labelOffsetY: 4,
+    },
+    {
+      id: 2,
+      name: "Curva 3 (Salida Chicane)",
+      x: 395,
+      y: 275,
+      progress: 0.258,
+      idealTime: 2.6,
+      idealTimeMs: 2600,
+      labelOffsetX: 40,
+      labelOffsetY: 4,
+    },
+    {
+      id: 3,
+      name: "Curva 4 (Horquilla Norte)",
+      x: 335,
+      y: 135,
+      progress: 0.385,
+      idealTime: 3.85,
+      idealTimeMs: 3850,
+      labelOffsetX: 42,
+      labelOffsetY: -12,
+    },
+    {
+      id: 4,
+      name: "Curva 6 (Complejo del Lago)",
+      x: 300,
+      y: 220,
+      progress: 0.485,
+      idealTime: 4.85,
+      idealTimeMs: 4850,
+      labelOffsetX: -38,
+      labelOffsetY: 4,
+    },
+    {
+      id: 5,
+      name: "Curvas 7-8 (Las Esses)",
+      x: 390,
+      y: 165,
+      progress: 0.595,
+      idealTime: 5.95,
+      idealTimeMs: 5950,
+      labelOffsetX: 38,
+      labelOffsetY: 4,
+    },
+    {
+      id: 6,
+      name: "Curva 11 (Fin de Esses)",
+      x: 230,
+      y: 95,
+      progress: 0.705,
+      idealTime: 7.05,
+      idealTimeMs: 7050,
+      labelOffsetX: -38,
+      labelOffsetY: -12,
+    },
+    {
+      id: 7,
+      name: "Curva 12 (Entrada al Foro Sol)",
+      x: 110,
+      y: 215,
+      progress: 0.815,
+      idealTime: 8.15,
+      idealTimeMs: 8150,
+      labelOffsetX: -42,
+      labelOffsetY: 4,
+    },
+    {
+      id: 8,
+      name: "Curva 16 (Peraltada Mansell)",
+      x: 45,
+      y: 350,
+      progress: 0.925,
+      idealTime: 9.25,
+      idealTimeMs: 9250,
+      labelOffsetX: -32,
+      labelOffsetY: 18,
+    },
+  ],
+};
+
+/**
+ * Silueta vectorial oficial del Autódromo José Carlos Pace (Interlagos - Brasil)
+ * Sentido: Antihorario
+ */
+export const brazilCircuit: CircuitConfig = {
+  id: "brazil_interlagos_2026",
+  gpId: "gp-brasil-2026",
+  name: "Autódromo José Carlos Pace (Interlagos)",
+  grandPrix: "GP de São Paulo • Interlagos",
+  viewBox: "0 10 520 440",
+  direction: "Antihorario",
+  startPoint: { x: 330, y: 90, angleDeg: 180 },
+  pathD:
+    "M 430 90 " +
+    "L 220 90 " +
+    "c -25 0 -45 18 -45 42 " +
+    "l 0 45 " +
+    "c 0 24 18 42 42 42 " +
+    "l 35 0 " +
+    "c 22 0 40 18 40 40 " +
+    "l 0 30 " +
+    "L 292 320 " +
+    "c 0 25 -18 45 -45 45 " +
+    "l -60 0 " +
+    "c -25 0 -45 -18 -45 -45 " +
+    "l 0 -35 " +
+    "c 0 -22 18 -40 40 -40 " +
+    "l 75 0 " +
+    "c 25 0 45 20 45 45 " +
+    "l 0 35 " +
+    "c 0 25 20 45 45 45 " +
+    "l 50 0 " +
+    "c 20 0 35 -15 35 -35 " +
+    "l 0 -40 " +
+    "c 0 -20 -15 -35 -35 -35 " +
+    "l -45 0 " +
+    "c -20 0 -35 15 -35 35 " +
+    "l 0 25 " +
+    "c 0 20 16 38 38 38 " +
+    "l 55 0 " +
+    "c 25 0 45 -20 45 -45 " +
+    "l 0 -115 " +
+    "c 0 -25 -20 -45 -45 -45 " +
+    "L 430 90 Z",
+  apexes: [
+    {
+      id: 1,
+      name: "Curva 1 (S de Senna - Frenada)",
+      x: 175,
+      y: 135,
+      progress: 0.125,
+      idealTime: 1.25,
+      idealTimeMs: 1250,
+      labelOffsetX: -38,
+      labelOffsetY: 4,
+    },
+    {
+      id: 2,
+      name: "Curva 2 (S de Senna - Salida)",
+      x: 215,
+      y: 218,
+      progress: 0.215,
+      idealTime: 2.15,
+      idealTimeMs: 2150,
+      labelOffsetX: -36,
+      labelOffsetY: 12,
+    },
+    {
+      id: 3,
+      name: "Curva 4 (Descida do Lago)",
+      x: 245,
+      y: 365,
+      progress: 0.355,
+      idealTime: 3.55,
+      idealTimeMs: 3550,
+      labelOffsetX: -40,
+      labelOffsetY: 14,
+    },
+    {
+      id: 4,
+      name: "Curva 5 (Salida do Lago)",
+      x: 180,
+      y: 275,
+      progress: 0.455,
+      idealTime: 4.55,
+      idealTimeMs: 4550,
+      labelOffsetX: -38,
+      labelOffsetY: -12,
+    },
+    {
+      id: 5,
+      name: "Curvas 6-7 (Ferradura)",
+      x: 340,
+      y: 310,
+      progress: 0.585,
+      idealTime: 5.85,
+      idealTimeMs: 5850,
+      labelOffsetX: 38,
+      labelOffsetY: 4,
+    },
+    {
+      id: 6,
+      name: "Curva 8 (Pinheirinho)",
+      x: 390,
+      y: 240,
+      progress: 0.695,
+      idealTime: 6.95,
+      idealTimeMs: 6950,
+      labelOffsetX: 38,
+      labelOffsetY: -8,
+    },
+    {
+      id: 7,
+      name: "Curva 9 (Bico de Pato)",
+      x: 345,
+      y: 165,
+      progress: 0.805,
+      idealTime: 8.05,
+      idealTimeMs: 8050,
+      labelOffsetX: -38,
+      labelOffsetY: -8,
+    },
+    {
+      id: 8,
+      name: "Curva 11 (Junção / Subida dos Boxes)",
+      x: 440,
+      y: 180,
+      progress: 0.915,
+      idealTime: 9.15,
+      idealTimeMs: 9150,
+      labelOffsetX: 42,
+      labelOffsetY: 4,
+    },
+  ],
+};
+
+// Compatibilidad retroactiva
+export const currentCircuit: CircuitConfig = austinCircuit;
+
+/**
  * Mapeo de configuraciones vectoriales de circuitos por ID de Gran Premio.
  */
 export const CIRCUITS_BY_GP: Record<string, CircuitConfig> = {
-  "gp-usa-2026": currentCircuit,
+  "gp-usa-2026": austinCircuit,
+  "gp-mexico-2026": mexicoCircuit,
+  "gp-brasil-2026": brazilCircuit,
 };
 
 /**
@@ -233,7 +503,7 @@ export function getCurrentActiveGpId(now: Date = new Date()): string {
 
 /**
  * Obtiene la configuración del circuito para el Gran Premio activo de la semana (o el gpId especificado).
- * Si aún no hay un trazado vectorial individualizado, usa la base vectorial pero aislando el gpId y nombre
+ * Si aún no hay un trazado vectorial individualizado, usa el trazado más afín aislando el gpId y nombre
  * para que los registros e intentos semanales inicien en cero para la nueva semana.
  */
 export function getCurrentCircuit(gpId?: string): CircuitConfig {
@@ -242,12 +512,13 @@ export function getCurrentCircuit(gpId?: string): CircuitConfig {
     return CIRCUITS_BY_GP[targetGpId];
   }
   const gpInfo = INITIAL_GRAND_PRIX.find((g) => g.id === targetGpId);
+  const fallback = CIRCUITS_BY_GP["gp-mexico-2026"] || austinCircuit;
   return {
-    ...currentCircuit,
+    ...fallback,
     id: `${targetGpId}_circuit`,
     gpId: targetGpId,
     grandPrix: gpInfo
       ? `${gpInfo.nombre} • ${gpInfo.circuito}`
-      : currentCircuit.grandPrix,
+      : fallback.grandPrix,
   };
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   collection,
   doc,
@@ -41,10 +42,6 @@ const LAP_DURATION_MS = 10000; // 10.0 segundos exactos para la vuelta completa
 const MAX_WEEKLY_ATTEMPTS = 5; // 5 intentos en total por semana (Lunes a Jueves)
 const MAX_POSSIBLE_POINTS = 40; // 8 curvas * 5 pts
 const MISS_PENALTY_MS = 1000; // Penalización en ms para curvas no presionadas o pasadas de largo
-
-// Circuito y Gran Premio activo de la semana en curso (se reinicia cada lunes con la nueva carrera del calendario)
-const currentCircuit: CircuitConfig = getCurrentCircuit();
-const SEMANA_GP_ID = currentCircuit.gpId; // ID estructurado por Gran Premio (ej: "gp-usa-2026")
 
 // Dificultad Extrema (Hitbox milimétrica en segundos)
 const TOLERANCE_VIOLETA_S = 0.025; // <= 25ms -> +5 pts
@@ -174,8 +171,16 @@ function computeF1VariableProgress(
   return 1;
 }
 
-export default function VueltaRapidaPage() {
+function VueltaRapidaContent() {
   const { user, profile, loading: authLoading, refreshProfile } = useAuth();
+  const searchParams = useSearchParams();
+  const gpParam = searchParams?.get("gp") || searchParams?.get("gpId");
+
+  // Circuito y Gran Premio activo obtenido dinámicamente de la URL o calendario actual
+  const currentCircuit: CircuitConfig = useMemo(() => {
+    return getCurrentCircuit(gpParam || undefined);
+  }, [gpParam]);
+  const SEMANA_GP_ID = currentCircuit.gpId;
 
   // Validación de día (Lunes=1 a Jueves=4) e intentos semanales (máx. 5) en Firestore
   const [checkingAccess, setCheckingAccess] = useState<boolean>(true);
@@ -272,7 +277,7 @@ export default function VueltaRapidaPage() {
         totalPathLengthRef.current = 0;
       }
     }
-  }, []);
+  }, [currentCircuit]);
 
   // Posicionar el punto luminoso (6-8px) en (x, y) directamente sobre el DOM sin re-renderizar React
   const setDotDomPosition = useCallback((x: number, y: number) => {
@@ -287,6 +292,22 @@ export default function VueltaRapidaPage() {
       dotCoreRef.current.setAttribute("cy", cy);
     }
   }, []);
+
+  // Sincronizar waypoints, longitud y posición inicial si cambia el circuito activo
+  useEffect(() => {
+    waypointsRef.current = [
+      { timeMs: 0, progress: 0 },
+      ...currentCircuit.apexes.map((ap) => ({
+        timeMs: ap.idealTimeMs,
+        progress: ap.progress,
+      })),
+      { timeMs: LAP_DURATION_MS, progress: 1 },
+    ];
+    if (trackPathRef.current) {
+      setTrackPathNode(trackPathRef.current);
+    }
+    setDotDomPosition(currentCircuit.startPoint.x, currentCircuit.startPoint.y);
+  }, [currentCircuit, setTrackPathNode, setDotDomPosition]);
 
   // Calcular desglose de puntos y aciertos en tiempo real desde apexResults
   const counts = React.useMemo(() => {
@@ -532,6 +553,7 @@ export default function VueltaRapidaPage() {
     profile?.vueltasPerfectas,
     authLoading,
     fetchWeeklyLeaderboard,
+    SEMANA_GP_ID,
   ]);
 
   // Disparar cartel flotante efímero sobre el APEX evaluado
@@ -800,6 +822,8 @@ export default function VueltaRapidaPage() {
     user?.email,
     refreshProfile,
     fetchWeeklyLeaderboard,
+    currentCircuit,
+    SEMANA_GP_ID,
   ]);
 
   const handleFinishLapRef = useRef(handleFinishLap);
@@ -883,7 +907,7 @@ export default function VueltaRapidaPage() {
 
     // Ejecutar el primer paso de inmediato (0ms de espera)
     tick(startTimestamp);
-  }, [setDotDomPosition]);
+  }, [setDotDomPosition, currentCircuit]);
 
   // Limpiar animación al desmontar el componente
   useEffect(() => {
@@ -913,7 +937,7 @@ export default function VueltaRapidaPage() {
     );
 
     startImmediateLoop();
-  }, [weeklyAttempts, setDotDomPosition, startImmediateLoop]);
+  }, [weeklyAttempts, setDotDomPosition, startImmediateLoop, currentCircuit]);
 
   // Acción "¡DOBLAR!" con Dificultad Extrema (Hitbox milimétrica: 25ms / 50ms / 100ms)
   const handleTurnAction = useCallback(() => {
@@ -966,7 +990,7 @@ export default function VueltaRapidaPage() {
       // > 0.1s (100ms): ROJO 🔴 (0 pts)
       recordApexOutcome(closestApex, "rojo", roundedDiffMs, `Δ ${deltaMsText}`);
     }
-  }, [recordApexOutcome]);
+  }, [recordApexOutcome, currentCircuit]);
 
   // Reiniciar para otro intento (si le quedan intentos de la semana)
   const handleResetToIdle = useCallback(() => {
@@ -986,20 +1010,19 @@ export default function VueltaRapidaPage() {
     if (timerDisplayRef.current) {
       timerDisplayRef.current.textContent = "0.00s / 10.00s";
     }
-  }, [weeklyAttempts, setDotDomPosition]);
+  }, [weeklyAttempts, setDotDomPosition, currentCircuit]);
 
   // Próximo APEX pendiente para resaltarlo en pista
   const nextPendingApex = React.useMemo(() => {
     return currentCircuit.apexes.find((ap) => !apexResults[ap.id]) || null;
-  }, [apexResults]);
+  }, [apexResults, currentCircuit]);
 
   const fastestLapHolder = leaderboard.length > 0 ? leaderboard[0] : null;
   const attemptsRemaining = Math.max(0, MAX_WEEKLY_ATTEMPTS - weeklyAttempts);
   const currentPerfectMedalTier = getPerfectLapMedalTier(vueltasPerfectas);
 
   return (
-    <ProtectedRoute>
-      <div className="min-h-screen bg-[#15151E] racing-grid text-[#D0D0D2] flex flex-col select-none">
+    <div className="min-h-screen bg-[#15151E] racing-grid text-[#D0D0D2] flex flex-col select-none">
         <Navbar />
 
         <main className="flex-1 max-w-5xl w-full mx-auto px-2 sm:px-6 lg:px-8 py-3 sm:py-6 space-y-3 sm:space-y-5">
@@ -1535,7 +1558,7 @@ export default function VueltaRapidaPage() {
                       </div>
                       <div>
                         <span className="text-[10px] font-black uppercase tracking-widest text-cyan-400 block">
-                          {currentCircuit.grandPrix} • Giro Antihorario
+                          {currentCircuit.grandPrix} • Giro {currentCircuit.direction || "Antihorario"}
                         </span>
                         <h1 className="text-base sm:text-xl font-black text-white tracking-tight">
                           Vuelta Rápida • 10s
@@ -2089,6 +2112,21 @@ export default function VueltaRapidaPage() {
           </div>
         )}
       </div>
+    );
+}
+
+export default function VueltaRapidaPage() {
+  return (
+    <ProtectedRoute>
+      <Suspense
+        fallback={
+          <div className="min-h-screen bg-[#15151E] flex items-center justify-center text-[#D0D0D2]">
+            <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
+          </div>
+        }
+      >
+        <VueltaRapidaContent />
+      </Suspense>
     </ProtectedRoute>
   );
 }
