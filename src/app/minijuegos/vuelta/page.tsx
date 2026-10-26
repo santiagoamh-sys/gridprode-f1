@@ -42,6 +42,8 @@ import {
   type CircuitConfig,
 } from "@/data/circuits";
 import {
+  trackCoordinates,
+  TRACK_COORDINATES,
   getTrackCoordinates,
   getCurrentActiveGpId,
   type CircuitTrackConfig,
@@ -191,14 +193,20 @@ function VueltaRapidaContent() {
   const searchParams = useSearchParams();
   const gpParam = searchParams?.get("gp") || searchParams?.get("gpId");
 
-  // Conexión DIRECTA al diccionario oficial de configuración sin useMemo ni estados locales obsoletos.
-  // Se evalúa dinámicamente en cada render para que cualquier edición en trackCoordinates.ts (x, y, progress)
-  // actualice los APEX en pantalla al instante con Fast Refresh / HMR.
+  // Cero Estados Intermedios: se lee directamente en el cuerpo del componente sin useState
   const activeGpId = gpParam || getCurrentActiveGpId();
-  const currentCircuit: CircuitTrackConfig = getTrackCoordinates(activeGpId);
-  const carreraActiva = currentCircuit;
-  const SEMANA_GP_ID = currentCircuit.gpId;
-  const apexesDependencyKey = JSON.stringify(currentCircuit.apexes);
+  const carreraActiva: CircuitTrackConfig =
+    trackCoordinates[activeGpId] || getTrackCoordinates(activeGpId);
+  const currentCircuit = carreraActiva;
+  const SEMANA_GP_ID = carreraActiva.gpId;
+
+  // Lectura directa estricta desde el diccionario sin estados intermedios
+  const currentApexes =
+    trackCoordinates[carreraActiva.id]?.apexes ||
+    trackCoordinates[carreraActiva.gpId]?.apexes ||
+    carreraActiva.apexes;
+
+  const apexesDependencyKey = JSON.stringify(currentApexes);
 
   // Validación de día (Lunes=1 a Jueves=4) e intentos semanales (máx. 5) en Firestore
   const [checkingAccess, setCheckingAccess] = useState<boolean>(true);
@@ -230,14 +238,14 @@ function VueltaRapidaContent() {
   const dotGlowRef = useRef<SVGCircleElement | null>(null);
   const dotCoreRef = useRef<SVGCircleElement | null>(null);
   const timerDisplayRef = useRef<HTMLSpanElement | null>(null);
-  const calibratedApexesRef = useRef<CircuitApexConfig[]>([]);
+  const calibratedApexesRef = useRef<CircuitApexConfig[]>([...currentApexes]);
   const curvatureProfileRef = useRef<CurvatureSpeedProfile | null>(null);
   const [pathNodeReady, setPathNodeReady] = useState<number>(0);
 
   // Waypoints precalculados para la física de velocidad variable (Largada -> 8 APEX -> Meta)
   const waypointsRef = useRef<TelemetryWaypoint[]>([
     { timeMs: 0, progress: 0 },
-    ...carreraActiva.apexes.map((ap) => ({
+    ...currentApexes.map((ap) => ({
       timeMs: ap.idealTimeMs,
       progress: ap.progress,
     })),
@@ -255,6 +263,9 @@ function VueltaRapidaContent() {
   const setTrackPathNode = useCallback((node: SVGPathElement | null) => {
     trackPathRef.current = node;
     if (node) {
+      try {
+        totalPathLengthRef.current = node.getTotalLength();
+      } catch {}
       setPathNodeReady((prev) => prev + 1);
     }
   }, []);
@@ -282,13 +293,13 @@ function VueltaRapidaContent() {
     if (!pathEl) {
       waypointsRef.current = [
         { timeMs: 0, progress: 0 },
-        ...carreraActiva.apexes.map((ap) => ({
+        ...currentApexes.map((ap) => ({
           timeMs: ap.idealTimeMs,
           progress: ap.progress,
         })),
         { timeMs: LAP_DURATION_MS, progress: 1 },
       ];
-      calibratedApexesRef.current = [...carreraActiva.apexes];
+      calibratedApexesRef.current = [...currentApexes];
       setDotDomPosition(carreraActiva.startPoint.x, carreraActiva.startPoint.y);
       return;
     }
@@ -313,37 +324,45 @@ function VueltaRapidaContent() {
         }
 
         // 3. Mapeo de APEX y calibración de tiempos ideales según la física real de la pista
-        const calibratedApexes: CircuitApexConfig[] = carreraActiva.apexes.map(
+        const calibratedApexes: CircuitApexConfig[] = currentApexes.map(
           (ap) => {
-            let bestP = ap.progress ?? 0;
-            let minSq = Infinity;
+            let bestP = typeof ap.progress === "number" ? ap.progress : 0;
+            let posX = ap.x;
+            let posY = ap.y;
 
-            // Búsqueda global del progreso más cercano al punto (x, y) del APEX
-            for (let i = 0; i < sampledPoints.length; i++) {
-              const sp = sampledPoints[i];
-              const dx = sp.x - ap.x;
-              const dy = sp.y - ap.y;
-              const distSq = dx * dx + dy * dy;
-              if (distSq < minSq) {
-                minSq = distSq;
-                bestP = sp.p;
+            if (typeof ap.progress === "number" && totalLen > 0) {
+              const pt = pathEl.getPointAtLength(ap.progress * totalLen);
+              posX = Math.round(pt.x * 10) / 10;
+              posY = Math.round(pt.y * 10) / 10;
+            } else {
+              // Búsqueda global del progreso más cercano al punto (x, y) del APEX
+              let minSq = Infinity;
+              for (let i = 0; i < sampledPoints.length; i++) {
+                const sp = sampledPoints[i];
+                const dx = sp.x - ap.x;
+                const dy = sp.y - ap.y;
+                const distSq = dx * dx + dy * dy;
+                if (distSq < minSq) {
+                  minSq = distSq;
+                  bestP = sp.p;
+                }
               }
-            }
 
-            // Refinamiento fino local (±0.02 con 50 pasos) para máxima precisión
-            const localSteps = 50;
-            const searchHalfWidth = 0.02;
-            const minSearch = Math.max(0, bestP - searchHalfWidth);
-            const maxSearch = Math.min(1, bestP + searchHalfWidth);
-            for (let j = 0; j <= localSteps; j++) {
-              const p = minSearch + ((maxSearch - minSearch) * j) / localSteps;
-              const pt = pathEl.getPointAtLength(p * totalLen);
-              const dx = pt.x - ap.x;
-              const dy = pt.y - ap.y;
-              const distSq = dx * dx + dy * dy;
-              if (distSq < minSq) {
-                minSq = distSq;
-                bestP = p;
+              // Refinamiento fino local (±0.02 con 50 pasos) para máxima precisión
+              const localSteps = 50;
+              const searchHalfWidth = 0.02;
+              const minSearch = Math.max(0, bestP - searchHalfWidth);
+              const maxSearch = Math.min(1, bestP + searchHalfWidth);
+              for (let j = 0; j <= localSteps; j++) {
+                const p = minSearch + ((maxSearch - minSearch) * j) / localSteps;
+                const pt = pathEl.getPointAtLength(p * totalLen);
+                const dx = pt.x - ap.x;
+                const dy = pt.y - ap.y;
+                const distSq = dx * dx + dy * dy;
+                if (distSq < minSq) {
+                  minSq = distSq;
+                  bestP = p;
+                }
               }
             }
 
@@ -352,6 +371,8 @@ function VueltaRapidaContent() {
 
             return {
               ...ap,
+              x: posX,
+              y: posY,
               progress: bestP,
               idealTime: idealTimeMs / 1000,
               idealTimeMs,
@@ -723,7 +744,7 @@ function VueltaRapidaContent() {
 
     const activeApexes = calibratedApexesRef.current.length > 0
       ? calibratedApexesRef.current
-      : carreraActiva.apexes;
+      : currentApexes;
 
     activeApexes.forEach((ap) => {
       if (!finalMap[ap.id]) {
@@ -984,7 +1005,7 @@ function VueltaRapidaContent() {
       // Marcar automáticamente como ROJO (0 pts) cualquier APEX no presionado tras > 0.1s (100ms)
       const apexes = calibratedApexesRef.current.length > 0
         ? calibratedApexesRef.current
-        : carreraActiva.apexes;
+        : currentApexes;
       for (let i = 0; i < apexes.length; i++) {
         const ap = apexes[i];
         if (!apexResultsRef.current[ap.id]) {
@@ -1052,7 +1073,7 @@ function VueltaRapidaContent() {
 
     const activeApexes = calibratedApexesRef.current.length > 0
       ? calibratedApexesRef.current
-      : carreraActiva.apexes;
+      : currentApexes;
     const pendingApexes = activeApexes.filter(
       (ap) => !apexResultsRef.current[ap.id]
     );
@@ -1121,9 +1142,9 @@ function VueltaRapidaContent() {
   const nextPendingApex = React.useMemo(() => {
     const activeApexes = calibratedApexesRef.current.length > 0
       ? calibratedApexesRef.current
-      : carreraActiva.apexes;
+      : currentApexes;
     return activeApexes.find((ap) => !apexResults[ap.id]) || null;
-  }, [apexResults, carreraActiva]);
+  }, [apexResults, currentApexes]);
 
   const fastestLapHolder = leaderboard.length > 0 ? leaderboard[0] : null;
   const attemptsRemaining = Math.max(0, MAX_WEEKLY_ATTEMPTS - weeklyAttempts);
@@ -1835,30 +1856,35 @@ function VueltaRapidaContent() {
                       LARGADA / META
                     </text>
 
-                    {/* Indicadores de APEX leídos DIRECTAMENTE desde el diccionario oficial de configuración */}
-                    {currentCircuit.apexes.map((apex) => {
+                    {/* Indicadores de APEX leídos DIRECTAMENTE desde trackCoordinates[carreraActiva.id].apexes */}
+                    {currentApexes.map((apex) => {
                       const tier = apexResults[apex.id];
                       const isNext =
                         hasStarted && nextPendingApex?.id === apex.id;
 
-                      // Posicionamiento reactivo directo atado a los valores del diccionario:
-                      // Si x e y están definidos en el diccionario, se atan directamente a cx y cy.
-                      // Si se especifica progress (o si x/y son 0/indefinidos), se calcula en la silueta SVG.
+                      // CÁLCULO VISUAL DIRECTO EN EL RENDER:
+                      // Si apex.progress está definido y el path SVG está disponible, calcula (posX, posY)
+                      // directamente con getPointAtLength(progress * totalLength) para alimentar cx y cy:
                       let posX = apex.x;
                       let posY = apex.y;
-                      if (
-                        (typeof posX !== "number" ||
-                          typeof posY !== "number" ||
-                          (posX === 0 && posY === 0)) &&
-                        typeof apex.progress === "number" &&
-                        trackPathRef.current &&
-                        totalPathLengthRef.current > 0
-                      ) {
-                        const pt = trackPathRef.current.getPointAtLength(
-                          apex.progress * totalPathLengthRef.current
-                        );
-                        posX = Math.round(pt.x * 10) / 10;
-                        posY = Math.round(pt.y * 10) / 10;
+
+                      if (typeof apex.progress === "number" && trackPathRef.current) {
+                        try {
+                          const totalLen =
+                            totalPathLengthRef.current > 0
+                              ? totalPathLengthRef.current
+                              : trackPathRef.current.getTotalLength();
+                          if (totalLen > 0) {
+                            const pt = trackPathRef.current.getPointAtLength(
+                              apex.progress * totalLen
+                            );
+                            posX = Math.round(pt.x * 10) / 10;
+                            posY = Math.round(pt.y * 10) / 10;
+                          }
+                        } catch {
+                          posX = apex.x;
+                          posY = apex.y;
+                        }
                       }
 
                       let ringColor = "#22D3EE";

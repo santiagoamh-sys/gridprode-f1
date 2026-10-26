@@ -100,9 +100,9 @@ export const mexicoTrackConfig: CircuitTrackConfig = {
     {
       id: 1,
       name: "Curva 1 (Moisés Solana)",
-      x: 452,
-      y: 100,
-      progress: 0.15,
+      x: 480,
+      y: 90,
+      progress: 0.20,
       idealTime: 1.5,
       idealTimeMs: 1500,
       labelOffsetX: 35,
@@ -177,9 +177,9 @@ export const mexicoTrackConfig: CircuitTrackConfig = {
     {
       id: 8,
       name: "Curva 16 (Peraltada Nigel Mansell)",
-      x: 85,
-      y: 65,
-      progress: 0.65,
+      x: 65,
+      y: 55,
+      progress: 0.45,
       idealTime: 9.5,
       idealTimeMs: 9500,
       labelOffsetX: -35,
@@ -538,6 +538,9 @@ export const TRACK_COORDINATES: Record<string, CircuitTrackConfig> = {
   brazil: brazilTrackConfig,
   brasil: brazilTrackConfig,
 };
+
+// Alias en camelCase para lectura directa
+export const trackCoordinates = TRACK_COORDINATES;
 
 /**
  * Obtiene la configuración del circuito buscándolo por su ID de GP o clave de circuito.
