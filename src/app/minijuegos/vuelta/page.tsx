@@ -14,12 +14,16 @@ import {
 import { db } from "@/lib/firebase/config";
 import { useAuth } from "@/context/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
-import { Navbar } from "@/components/Navbar";
+import { Navbar, isEmailInInitialAdmins } from "@/components/Navbar";
 import { ThemedTrophy } from "@/components/ThemedTrophy";
 import { BadgeTier } from "@/data/badgesData";
 import {
   ArrowLeft,
   Award,
+  Check,
+  Copy,
+  Edit3,
+  FileCode,
   Flag,
   Flame,
   Gamepad2,
@@ -28,10 +32,12 @@ import {
   Lock,
   Medal,
   Play,
+  RefreshCw,
   RotateCcw,
   Sparkles,
   Timer,
   Trophy,
+  Undo2,
   X,
   Zap,
 } from "lucide-react";
@@ -47,6 +53,7 @@ import {
   getTrackCoordinates,
   getCurrentActiveGpId,
   type CircuitTrackConfig,
+  type ApexCoordinate,
 } from "@/utils/trackCoordinates";
 import {
   computeCurvatureSpeedProfile,
@@ -231,6 +238,22 @@ function VueltaRapidaContent() {
     FloatingFeedback[]
   >([]);
   const [isNewWeeklyBest, setIsNewWeeklyBest] = useState<boolean>(false);
+
+  // =========================================================================
+  // ESTADOS Y REFERENCIAS PARA MODO EDICIÓN VISUAL APEX (SOLO ADMIN)
+  // =========================================================================
+  const isAdmin =
+    profile?.role === "Administrador" || isEmailInInitialAdmins(user?.email);
+  const [isEditMode, setIsEditMode] = useState<boolean>(false);
+  const [editedApexes, setEditedApexes] = useState<ApexCoordinate[]>([]);
+  const [hoverPoint, setHoverPoint] = useState<{
+    x: number;
+    y: number;
+    progress: number;
+  } | null>(null);
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [copiedCode, setCopiedCode] = useState<boolean>(false);
+  const svgCanvasRef = useRef<SVGSVGElement | null>(null);
 
   // Referencias DOM directas para animación a 120fps con 0ms de delay de arranque
   const trackPathRef = useRef<SVGPathElement | null>(null);
@@ -1146,6 +1169,195 @@ function VueltaRapidaContent() {
     return activeApexes.find((ap) => !apexResults[ap.id]) || null;
   }, [apexResults, currentApexes]);
 
+  // =========================================================================
+  // MODO EDICIÓN VISUAL DE APEX (HERRAMIENTA EXCLUSIVA PARA ADMINISTRADORES)
+  // =========================================================================
+  const handleUndoApex = useCallback(() => {
+    setEditedApexes((prev) => prev.slice(0, -1));
+  }, []);
+
+  const handleResetApexes = useCallback(() => {
+    setEditedApexes([]);
+    setHoverPoint(null);
+  }, []);
+
+  const handleLoadCurrentApexes = useCallback(() => {
+    setEditedApexes([...currentApexes]);
+  }, [currentApexes]);
+
+  const handleSvgClick = useCallback(
+    (e: React.MouseEvent<SVGSVGElement>) => {
+      if (!isEditMode || !svgCanvasRef.current || !trackPathRef.current) return;
+      if (editedApexes.length >= 8) {
+        setShowExportModal(true);
+        return;
+      }
+
+      const svgEl = svgCanvasRef.current;
+      const pathEl = trackPathRef.current;
+
+      const pt = svgEl.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      const ctm = svgEl.getScreenCTM();
+      if (!ctm) return;
+      const svgCoords = pt.matrixTransform(ctm.inverse());
+      const clickX = svgCoords.x;
+      const clickY = svgCoords.y;
+
+      const totalLen =
+        totalPathLengthRef.current > 0
+          ? totalPathLengthRef.current
+          : pathEl.getTotalLength();
+      if (totalLen <= 0) return;
+
+      // 1. Muestreo denso de 1000 puntos para hallar el progreso más cercano en la pista
+      const SAMPLES = 1000;
+      let bestP = 0;
+      let minSq = Infinity;
+      for (let i = 0; i <= SAMPLES; i++) {
+        const p = i / SAMPLES;
+        const pathPoint = pathEl.getPointAtLength(p * totalLen);
+        const dx = pathPoint.x - clickX;
+        const dy = pathPoint.y - clickY;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < minSq) {
+          minSq = distSq;
+          bestP = p;
+        }
+      }
+
+      // 2. Refinamiento fino local (±0.02 con 50 pasos)
+      const localSteps = 50;
+      const searchHalfWidth = 0.02;
+      const minSearch = Math.max(0, bestP - searchHalfWidth);
+      const maxSearch = Math.min(1, bestP + searchHalfWidth);
+      for (let j = 0; j <= localSteps; j++) {
+        const p = minSearch + ((maxSearch - minSearch) * j) / localSteps;
+        const pathPoint = pathEl.getPointAtLength(p * totalLen);
+        const dx = pathPoint.x - clickX;
+        const dy = pathPoint.y - clickY;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < minSq) {
+          minSq = distSq;
+          bestP = p;
+        }
+      }
+
+      const finalPoint = pathEl.getPointAtLength(bestP * totalLen);
+      const calculatedX = Math.round(finalPoint.x * 10) / 10;
+      const calculatedY = Math.round(finalPoint.y * 10) / 10;
+      const roundedProgress = Math.round(bestP * 10000) / 10000;
+
+      const profile =
+        curvatureProfileRef.current ||
+        computeCurvatureSpeedProfile(pathEl, LAP_DURATION_MS, 600);
+      const idealTimeMs = Math.round(getTimeFromProgress(profile, bestP));
+      const idealTime = Math.round((idealTimeMs / 1000) * 100) / 100;
+
+      const newId = editedApexes.length + 1;
+      const existingName =
+        currentCircuit.apexes.find((a) => a.id === newId)?.name ||
+        `Curva ${newId}`;
+
+      const newApex: ApexCoordinate = {
+        id: newId,
+        name: existingName,
+        x: calculatedX,
+        y: calculatedY,
+        progress: roundedProgress,
+        idealTime,
+        idealTimeMs,
+        labelOffsetX: newId % 2 === 0 ? 38 : -38,
+        labelOffsetY: 4,
+      };
+
+      const updated = [...editedApexes, newApex];
+      setEditedApexes(updated);
+
+      if (updated.length === 8) {
+        setShowExportModal(true);
+      }
+    },
+    [isEditMode, editedApexes, currentCircuit]
+  );
+
+  const handleSvgPointerMove = useCallback(
+    (e: React.PointerEvent<SVGSVGElement>) => {
+      if (!isEditMode || !svgCanvasRef.current || !trackPathRef.current) return;
+      const svgEl = svgCanvasRef.current;
+      const pathEl = trackPathRef.current;
+
+      const pt = svgEl.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      const ctm = svgEl.getScreenCTM();
+      if (!ctm) return;
+      const svgCoords = pt.matrixTransform(ctm.inverse());
+      const clickX = svgCoords.x;
+      const clickY = svgCoords.y;
+
+      const totalLen =
+        totalPathLengthRef.current > 0
+          ? totalPathLengthRef.current
+          : pathEl.getTotalLength();
+      if (totalLen <= 0) return;
+
+      const SAMPLES = 250;
+      let bestP = 0;
+      let minSq = Infinity;
+      for (let i = 0; i <= SAMPLES; i++) {
+        const p = i / SAMPLES;
+        const pathPoint = pathEl.getPointAtLength(p * totalLen);
+        const dx = pathPoint.x - clickX;
+        const dy = pathPoint.y - clickY;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < minSq) {
+          minSq = distSq;
+          bestP = p;
+        }
+      }
+
+      const finalPoint = pathEl.getPointAtLength(bestP * totalLen);
+      setHoverPoint({
+        x: Math.round(finalPoint.x * 10) / 10,
+        y: Math.round(finalPoint.y * 10) / 10,
+        progress: Math.round(bestP * 10000) / 10000,
+      });
+    },
+    [isEditMode]
+  );
+
+  const formattedApexesCode = useMemo(() => {
+    const listToExport =
+      editedApexes.length > 0 ? editedApexes : currentApexes;
+    const lines = listToExport.map((ap) => {
+      return `    {
+      id: ${ap.id},
+      name: "${ap.name}",
+      x: ${ap.x},
+      y: ${ap.y},
+      progress: ${ap.progress},
+      idealTime: ${ap.idealTime},
+      idealTimeMs: ${ap.idealTimeMs},
+      labelOffsetX: ${ap.labelOffsetX ?? 35},
+      labelOffsetY: ${ap.labelOffsetY ?? 4},
+    },`;
+    });
+
+    return `  apexes: [\n${lines.join("\n")}\n  ],`;
+  }, [editedApexes, currentApexes]);
+
+  const handleCopyCode = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(formattedApexesCode);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2500);
+    } catch (err) {
+      console.error("Error al copiar al portapapeles:", err);
+    }
+  }, [formattedApexesCode]);
+
   const fastestLapHolder = leaderboard.length > 0 ? leaderboard[0] : null;
   const attemptsRemaining = Math.max(0, MAX_WEEKLY_ATTEMPTS - weeklyAttempts);
   const currentPerfectMedalTier = getPerfectLapMedalTier(vueltasPerfectas);
@@ -1157,13 +1369,34 @@ function VueltaRapidaContent() {
         <main className="flex-1 max-w-5xl w-full mx-auto px-2 sm:px-6 lg:px-8 py-3 sm:py-6 space-y-3 sm:space-y-5">
           {/* Barra superior de retorno + Indicador de Intentos de la Semana (X / 5) */}
           <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-            <Link
-              href="/minijuegos"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1F1F27]/80 backdrop-blur-md border border-white/10 text-xs font-bold text-[#D0D0D2] hover:text-white hover:border-white/20 transition-all"
-            >
-              <ArrowLeft className="w-4 h-4 text-cyan-400" />
-              <span>Volver al Hub</span>
-            </Link>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href="/minijuegos"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1F1F27]/80 backdrop-blur-md border border-white/10 text-xs font-bold text-[#D0D0D2] hover:text-white hover:border-white/20 transition-all"
+              >
+                <ArrowLeft className="w-4 h-4 text-cyan-400" />
+                <span>Volver al Hub</span>
+              </Link>
+
+              {/* Botón de Edición (Solo Admin) */}
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditMode((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-black uppercase tracking-wider transition-all shadow-md ${
+                    isEditMode
+                      ? "bg-amber-500 text-black border-amber-400 shadow-amber-500/30 ring-2 ring-amber-400/50"
+                      : "bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25 hover:border-amber-400"
+                  }`}
+                  title="Herramienta para calibrar y mapear visualmente los APEX del circuito"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>
+                    {isEditMode ? "Modo Edición ACTIVO" : "Activar Modo Edición APEX"}
+                  </span>
+                </button>
+              )}
+            </div>
 
             {!checkingAccess && isDayAllowed && (
               <div className="flex flex-wrap items-center gap-2">
@@ -1733,27 +1966,113 @@ function VueltaRapidaContent() {
                 <div className="absolute -top-24 left-1/3 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
                 <div className="absolute -bottom-24 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
-                {/* Sub-barra informativa compacta */}
-                <div className="relative z-10 flex flex-wrap items-center justify-between gap-1.5 px-2 pt-1 pb-1 text-[10px] sm:text-[11px] font-bold text-[#8E8E93]">
-                  <span>
-                    Giro <strong className="text-white">Antihorario</strong> • El
-                    punto acelera en rectas y frena al llegar a cada{" "}
-                    <strong className="text-cyan-400">APEX (1 al 8)</strong>
-                  </span>
-                  {nextPendingApex && (
-                    <span className="text-cyan-300 font-mono">
-                      Próximo: APEX {nextPendingApex.id} •{" "}
-                      {nextPendingApex.name}
+                {/* Barra de Controles de Edición APEX (Solo Admin cuando isEditMode = true) */}
+                {isEditMode ? (
+                  <div className="relative z-20 mb-2 p-2.5 sm:p-3 rounded-2xl bg-amber-500/15 border border-amber-400/50 backdrop-blur-md flex flex-wrap items-center justify-between gap-2.5 shadow-xl">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500" />
+                      </span>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-black uppercase tracking-wider text-amber-300">
+                            Modo Edición APEX
+                          </span>
+                          <span className="px-1.5 py-0.2 rounded bg-black/40 text-[10px] font-mono font-bold text-white">
+                            {editedApexes.length}/8 puntos
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-amber-100/80">
+                          {editedApexes.length < 8
+                            ? `Haz click sobre la pista para fijar el APEX ${editedApexes.length + 1} de 8`
+                            : "¡Los 8 APEX están fijados! Revisa o exporta el código."}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleUndoApex}
+                        disabled={editedApexes.length === 0}
+                        className="px-2.5 py-1 rounded-lg bg-[#1F1F27] border border-white/10 hover:border-white/20 disabled:opacity-40 text-xs font-bold text-[#D0D0D2] inline-flex items-center gap-1 transition-all cursor-pointer disabled:cursor-not-allowed"
+                        title="Deshacer el último APEX colocado"
+                      >
+                        <Undo2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Deshacer</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleResetApexes}
+                        disabled={editedApexes.length === 0}
+                        className="px-2.5 py-1 rounded-lg bg-[#1F1F27] border border-white/10 hover:border-red-500/40 text-xs font-bold text-red-300 disabled:opacity-40 inline-flex items-center gap-1 transition-all cursor-pointer disabled:cursor-not-allowed"
+                        title="Borrar todos los puntos colocados"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Reiniciar</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleLoadCurrentApexes}
+                        className="px-2.5 py-1 rounded-lg bg-[#1F1F27] border border-white/10 hover:border-cyan-500/40 text-xs font-bold text-cyan-300 inline-flex items-center gap-1 transition-all cursor-pointer"
+                        title="Cargar los 8 puntos actuales del circuito para editarlos"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Cargar Actuales</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowExportModal(true)}
+                        className="px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-xs font-black text-white inline-flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+                        title="Ver o copiar el bloque de configuración para trackCoordinates.ts"
+                      >
+                        <FileCode className="w-3.5 h-3.5" />
+                        <span>Exportar ({editedApexes.length}/8)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsEditMode(false)}
+                        className="p-1 rounded-lg bg-black/40 hover:bg-black/60 text-[#8E8E93] hover:text-white transition-all cursor-pointer"
+                        title="Cerrar modo edición"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Sub-barra informativa compacta */
+                  <div className="relative z-10 flex flex-wrap items-center justify-between gap-1.5 px-2 pt-1 pb-1 text-[10px] sm:text-[11px] font-bold text-[#8E8E93]">
+                    <span>
+                      Giro <strong className="text-white">Antihorario</strong> • El
+                      punto acelera en rectas y frena al llegar a cada{" "}
+                      <strong className="text-cyan-400">APEX (1 al 8)</strong>
                     </span>
-                  )}
-                </div>
+                    {nextPendingApex && (
+                      <span className="text-cyan-300 font-mono">
+                        Próximo: APEX {nextPendingApex.id} •{" "}
+                        {nextPendingApex.name}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {/* Lienzo SVG Oficial Maximizado (w-full min-h-[50vh]) */}
                 <div className="relative w-full min-h-[50vh] sm:min-h-[56vh] flex items-center justify-center">
                   <svg
+                    ref={svgCanvasRef}
                     viewBox={currentCircuit.viewBox}
-                    className="w-full min-h-[50vh] sm:min-h-[56vh] max-h-[68vh] h-auto overflow-visible"
+                    className={`w-full min-h-[50vh] sm:min-h-[56vh] max-h-[68vh] h-auto overflow-visible ${
+                      isEditMode ? "cursor-crosshair select-none" : ""
+                    }`}
                     preserveAspectRatio="xMidYMid meet"
+                    onClick={isEditMode ? handleSvgClick : undefined}
+                    onPointerMove={isEditMode ? handleSvgPointerMove : undefined}
+                    onPointerLeave={isEditMode ? () => setHoverPoint(null) : undefined}
                   >
                     <defs>
                       {/* Resplandor LED para el móvil (Punto Luminoso de 6 a 8px) */}
@@ -1856,126 +2175,249 @@ function VueltaRapidaContent() {
                       LARGADA / META
                     </text>
 
-                    {/* Indicadores de APEX leídos DIRECTAMENTE desde trackCoordinates[carreraActiva.id].apexes */}
-                    {currentApexes.map((apex) => {
-                      const tier = apexResults[apex.id];
-                      const isNext =
-                        hasStarted && nextPendingApex?.id === apex.id;
+                    {/* Indicadores de APEX (Modo Edición vs Modo Normal) */}
+                    {isEditMode ? (
+                      <>
+                        {editedApexes.map((apex) => {
+                          const labelX = apex.x + (apex.labelOffsetX || 0);
+                          const labelY = apex.y + (apex.labelOffsetY || 0);
 
-                      // CÁLCULO VISUAL DIRECTO EN EL RENDER:
-                      // Si apex.progress está definido y el path SVG está disponible, calcula (posX, posY)
-                      // directamente con getPointAtLength(progress * totalLength) para alimentar cx y cy:
-                      let posX = apex.x;
-                      let posY = apex.y;
+                          return (
+                            <g key={apex.id} className="cursor-pointer">
+                              {/* Círculo de pulsación exterior */}
+                              <circle
+                                cx={apex.x}
+                                cy={apex.y}
+                                r="12"
+                                fill="none"
+                                stroke="#F59E0B"
+                                strokeWidth="1.5"
+                                opacity="0.6"
+                                className="animate-ping"
+                              />
 
-                      if (typeof apex.progress === "number" && trackPathRef.current) {
-                        try {
-                          const totalLen =
-                            totalPathLengthRef.current > 0
-                              ? totalPathLengthRef.current
-                              : trackPathRef.current.getTotalLength();
-                          if (totalLen > 0) {
-                            const pt = trackPathRef.current.getPointAtLength(
-                              apex.progress * totalLen
-                            );
-                            posX = Math.round(pt.x * 10) / 10;
-                            posY = Math.round(pt.y * 10) / 10;
+                              {/* Círculo central cian */}
+                              <circle
+                                cx={apex.x}
+                                cy={apex.y}
+                                r="6.5"
+                                fill="rgba(6, 182, 212, 0.45)"
+                                stroke="#22D3EE"
+                                strokeWidth="2.5"
+                                filter="url(#apex-cyan-glow)"
+                              />
+                              <circle
+                                cx={apex.x}
+                                cy={apex.y}
+                                r="2.2"
+                                fill="#ECFEFF"
+                              />
+
+                              {/* Placa identificatoria con ID y progreso exacto */}
+                              <g transform={`translate(${labelX}, ${labelY})`}>
+                                <rect
+                                  x="-26"
+                                  y="-12"
+                                  width="52"
+                                  height="24"
+                                  rx="5"
+                                  fill="rgba(8, 51, 68, 0.95)"
+                                  stroke="#22D3EE"
+                                  strokeWidth="1.2"
+                                />
+                                <text
+                                  x="0"
+                                  y="-2"
+                                  fill="#67E8F9"
+                                  fontSize="8"
+                                  fontWeight="900"
+                                  textAnchor="middle"
+                                  className="font-mono tracking-wider"
+                                >
+                                  APEX {apex.id}
+                                </text>
+                                <text
+                                  x="0"
+                                  y="7"
+                                  fill="#CBD5E1"
+                                  fontSize="6.5"
+                                  fontWeight="700"
+                                  textAnchor="middle"
+                                  className="font-mono"
+                                >
+                                  p: {apex.progress}
+                                </text>
+                              </g>
+                            </g>
+                          );
+                        })}
+
+                        {/* Previsualización fantasma al pasar el mouse sobre la pista */}
+                        {hoverPoint && editedApexes.length < 8 && (
+                          <g className="pointer-events-none">
+                            <circle
+                              cx={hoverPoint.x}
+                              cy={hoverPoint.y}
+                              r="8"
+                              fill="rgba(245, 158, 11, 0.3)"
+                              stroke="#F59E0B"
+                              strokeWidth="2"
+                              strokeDasharray="3 3"
+                            />
+                            <circle
+                              cx={hoverPoint.x}
+                              cy={hoverPoint.y}
+                              r="2.5"
+                              fill="#FEF08A"
+                            />
+                            <g transform={`translate(${hoverPoint.x}, ${hoverPoint.y - 18})`}>
+                              <rect
+                                x="-32"
+                                y="-8.5"
+                                width="64"
+                                height="17"
+                                rx="4"
+                                fill="rgba(30, 27, 75, 0.95)"
+                                stroke="#F59E0B"
+                                strokeWidth="1"
+                              />
+                              <text
+                                x="0"
+                                y="3"
+                                fill="#FDE68A"
+                                fontSize="7.5"
+                                fontWeight="800"
+                                textAnchor="middle"
+                                className="font-mono uppercase tracking-wider"
+                              >
+                                APEX {editedApexes.length + 1} • p:{hoverPoint.progress}
+                              </text>
+                            </g>
+                          </g>
+                        )}
+                      </>
+                    ) : (
+                      /* MODO NORMAL: Indicadores oficiales leídos de trackCoordinates */
+                      currentApexes.map((apex) => {
+                        const tier = apexResults[apex.id];
+                        const isNext =
+                          hasStarted && nextPendingApex?.id === apex.id;
+
+                        // CÁLCULO VISUAL DIRECTO EN EL RENDER:
+                        // Si apex.progress está definido y el path SVG está disponible, calcula (posX, posY)
+                        // directamente con getPointAtLength(progress * totalLength) para alimentar cx y cy:
+                        let posX = apex.x;
+                        let posY = apex.y;
+
+                        if (typeof apex.progress === "number" && trackPathRef.current) {
+                          try {
+                            const totalLen =
+                              totalPathLengthRef.current > 0
+                                ? totalPathLengthRef.current
+                                : trackPathRef.current.getTotalLength();
+                            if (totalLen > 0) {
+                              const pt = trackPathRef.current.getPointAtLength(
+                                apex.progress * totalLen
+                              );
+                              posX = Math.round(pt.x * 10) / 10;
+                              posY = Math.round(pt.y * 10) / 10;
+                            }
+                          } catch {
+                            posX = apex.x;
+                            posY = apex.y;
                           }
-                        } catch {
-                          posX = apex.x;
-                          posY = apex.y;
                         }
-                      }
 
-                      let ringColor = "#22D3EE";
-                      let badgeBg = "rgba(8, 51, 68, 0.92)";
-                      let badgeBorder = "#22D3EE";
-                      let badgeText = "#67E8F9";
+                        let ringColor = "#22D3EE";
+                        let badgeBg = "rgba(8, 51, 68, 0.92)";
+                        let badgeBorder = "#22D3EE";
+                        let badgeText = "#67E8F9";
 
-                      if (tier === "violeta") {
-                        ringColor = "#C084FC";
-                        badgeBg = "rgba(88, 28, 135, 0.92)";
-                        badgeBorder = "#C084FC";
-                        badgeText = "#E9D5FF";
-                      } else if (tier === "verde") {
-                        ringColor = "#34D399";
-                        badgeBg = "rgba(6, 78, 59, 0.92)";
-                        badgeBorder = "#34D399";
-                        badgeText = "#A7F3D0";
-                      } else if (tier === "amarillo") {
-                        ringColor = "#FBBF24";
-                        badgeBg = "rgba(120, 53, 15, 0.92)";
-                        badgeBorder = "#FBBF24";
-                        badgeText = "#FDE68A";
-                      } else if (tier === "rojo") {
-                        ringColor = "#F87171";
-                        badgeBg = "rgba(127, 29, 29, 0.92)";
-                        badgeBorder = "#F87171";
-                        badgeText = "#FECACA";
-                      }
+                        if (tier === "violeta") {
+                          ringColor = "#C084FC";
+                          badgeBg = "rgba(88, 28, 135, 0.92)";
+                          badgeBorder = "#C084FC";
+                          badgeText = "#E9D5FF";
+                        } else if (tier === "verde") {
+                          ringColor = "#34D399";
+                          badgeBg = "rgba(6, 78, 59, 0.92)";
+                          badgeBorder = "#34D399";
+                          badgeText = "#A7F3D0";
+                        } else if (tier === "amarillo") {
+                          ringColor = "#FBBF24";
+                          badgeBg = "rgba(120, 53, 15, 0.92)";
+                          badgeBorder = "#FBBF24";
+                          badgeText = "#FDE68A";
+                        } else if (tier === "rojo") {
+                          ringColor = "#F87171";
+                          badgeBg = "rgba(127, 29, 29, 0.92)";
+                          badgeBorder = "#F87171";
+                          badgeText = "#FECACA";
+                        }
 
-                      const labelX = posX + (apex.labelOffsetX || 0);
-                      const labelY = posY + (apex.labelOffsetY || 0);
+                        const labelX = posX + (apex.labelOffsetX || 0);
+                        const labelY = posY + (apex.labelOffsetY || 0);
 
-                      return (
-                        <g key={apex.id}>
-                          {isNext && (
+                        return (
+                          <g key={apex.id}>
+                            {isNext && (
+                              <circle
+                                cx={posX}
+                                cy={posY}
+                                r="11"
+                                fill="none"
+                                stroke="#22D3EE"
+                                strokeWidth="1.8"
+                                opacity="0.7"
+                                className="animate-ping"
+                              />
+                            )}
+
+                            {/* Círculo brillante azul/cian fijo sobre el centro exacto del APEX */}
                             <circle
                               cx={posX}
                               cy={posY}
-                              r="11"
-                              fill="none"
-                              stroke="#22D3EE"
-                              strokeWidth="1.8"
-                              opacity="0.7"
-                              className="animate-ping"
+                              r="5.5"
+                              fill="rgba(6, 182, 212, 0.3)"
+                              stroke={ringColor}
+                              strokeWidth="2"
+                              filter="url(#apex-cyan-glow)"
                             />
-                          )}
-
-                          {/* Círculo brillante azul/cian fijo sobre el centro exacto del APEX */}
-                          <circle
-                            cx={posX}
-                            cy={posY}
-                            r="5.5"
-                            fill="rgba(6, 182, 212, 0.3)"
-                            stroke={ringColor}
-                            strokeWidth="2"
-                            filter="url(#apex-cyan-glow)"
-                          />
-                          <circle
-                            cx={posX}
-                            cy={posY}
-                            r="1.8"
-                            fill="#ECFEFF"
-                          />
-
-                          {/* Etiqueta con la palabra 'APEX' y su número (1 al 8) */}
-                          <g transform={`translate(${labelX}, ${labelY})`}>
-                            <rect
-                              x="-24"
-                              y="-8.5"
-                              width="48"
-                              height="16"
-                              rx="4"
-                              fill={badgeBg}
-                              stroke={badgeBorder}
-                              strokeWidth="1"
+                            <circle
+                              cx={posX}
+                              cy={posY}
+                              r="1.8"
+                              fill="#ECFEFF"
                             />
-                            <text
-                              x="0"
-                              y="2.5"
-                              fill={badgeText}
-                              fontSize="8.2"
-                              fontWeight="900"
-                              textAnchor="middle"
-                              className="font-mono tracking-wider"
-                            >
-                              APEX {apex.id}
-                            </text>
+
+                            {/* Etiqueta con la palabra 'APEX' y su número (1 al 8) */}
+                            <g transform={`translate(${labelX}, ${labelY})`}>
+                              <rect
+                                x="-24"
+                                y="-8.5"
+                                width="48"
+                                height="16"
+                                rx="4"
+                                fill={badgeBg}
+                                stroke={badgeBorder}
+                                strokeWidth="1"
+                              />
+                              <text
+                                x="0"
+                                y="2.5"
+                                fill={badgeText}
+                                fontSize="8.2"
+                                fontWeight="900"
+                                textAnchor="middle"
+                                className="font-mono tracking-wider"
+                              >
+                                APEX {apex.id}
+                              </text>
+                            </g>
                           </g>
-                        </g>
-                      );
-                    })}
+                        );
+                      })
+                    )}
 
                     {/* El Móvil: Punto Luminoso (glow) de 7px de diámetro (entre 6 y 8px) */}
                     <g>
@@ -2085,7 +2527,20 @@ function VueltaRapidaContent() {
 
               {/* Botón Grande, Destacado y Centrado: "¡ARRANCAR!" / "¡DOBLAR!" */}
               <div className="flex justify-center pt-1 pb-2">
-                {!hasStarted ? (
+                {isEditMode ? (
+                  <div className="w-full max-w-md py-4 px-6 rounded-3xl bg-amber-500/10 border border-amber-500/30 text-center space-y-1.5 shadow-lg">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-black uppercase tracking-wider">
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Modo Edición Interactivo Activo</span>
+                    </div>
+                    <p className="text-xs text-white/90 font-bold">
+                      Haz click sobre la silueta del circuito para fijar cada punto APEX ({editedApexes.length}/8).
+                    </p>
+                    <p className="text-[11px] text-[#8E8E93]">
+                      Para jugar la vuelta lanzada de 10 segundos, desactiva el modo edición en la barra superior.
+                    </p>
+                  </div>
+                ) : !hasStarted ? (
                   <button
                     type="button"
                     onPointerDown={(e) => {
@@ -2262,6 +2717,100 @@ function VueltaRapidaContent() {
               >
                 ¡Lucir Medalla en mi Perfil!
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* =============================================================== */}
+        {/* MODAL DE EXPORTACIÓN DE CÓDIGO APEX (SOLO ADMIN)                */}
+        {/* =============================================================== */}
+        {showExportModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+            onClick={() => setShowExportModal(false)}
+          >
+            <div
+              className="relative w-full max-w-2xl rounded-3xl bg-gradient-to-b from-[#1F1F2B] via-[#171722] to-[#12121A] border border-cyan-400/40 p-6 sm:p-8 shadow-[0_0_60px_rgba(6,182,212,0.25)] space-y-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-center text-[#8E8E93] hover:text-white transition-colors cursor-pointer"
+                aria-label="Cerrar modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="space-y-1.5 text-left">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-400/40 text-cyan-300 text-xs font-black uppercase tracking-wider">
+                  <FileCode className="w-3.5 h-3.5" />
+                  <span>Código Generado • {carreraActiva.name}</span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                  Configuración de APEX Calibrada ({editedApexes.length}/8 puntos)
+                </h2>
+                <p className="text-xs text-[#8E8E93] leading-relaxed">
+                  Copia este bloque y reemplaza el array{" "}
+                  <code className="text-cyan-300 bg-black/40 px-1.5 py-0.5 rounded font-mono">
+                    apexes
+                  </code>{" "}
+                  en{" "}
+                  <code className="text-cyan-300 bg-black/40 px-1.5 py-0.5 rounded font-mono">
+                    src/utils/trackCoordinates.ts
+                  </code>{" "}
+                  dentro de la configuración de este circuito.
+                </p>
+              </div>
+
+              <div className="relative">
+                <textarea
+                  readOnly
+                  value={formattedApexesCode}
+                  rows={13}
+                  className="w-full rounded-2xl bg-[#0D0D14] border border-white/15 p-4 font-mono text-xs text-cyan-200 focus:outline-none focus:border-cyan-400 resize-none selection:bg-cyan-500/30 selection:text-white"
+                />
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+                <span className="text-xs text-[#8E8E93]">
+                  {editedApexes.length < 8
+                    ? `⚠️ Solo has colocado ${editedApexes.length} de 8 APEX.`
+                    : "✅ Los 8 APEX están listos para guardar en el diccionario."}
+                </span>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setShowExportModal(false)}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-[#D0D0D2] transition-colors cursor-pointer"
+                  >
+                    Seguir Editando
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyCode}
+                    className={`w-full sm:w-auto px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider inline-flex items-center justify-center gap-2 transition-all shadow-lg cursor-pointer ${
+                      copiedCode
+                        ? "bg-emerald-500 text-white shadow-emerald-500/30 ring-2 ring-emerald-400"
+                        : "bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white shadow-cyan-500/30"
+                    }`}
+                  >
+                    {copiedCode ? (
+                      <>
+                        <Check className="w-4 h-4 text-white" />
+                        <span>¡Código Copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4" />
+                        <span>Copiar Código</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}

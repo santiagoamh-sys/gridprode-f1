@@ -100,9 +100,9 @@ export const mexicoTrackConfig: CircuitTrackConfig = {
     {
       id: 1,
       name: "Curva 1 (Moisés Solana)",
-      x: 480,
+      x: 570,
       y: 90,
-      progress: 0.20,
+      progress: 0.65,
       idealTime: 1.5,
       idealTimeMs: 1500,
       labelOffsetX: 35,
