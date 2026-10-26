@@ -1,6 +1,10 @@
 "use client";
 
 import React from "react";
+import {
+  MEXICO_OFFICIAL_PATH,
+  AUSTIN_OFFICIAL_PATH,
+} from "@/utils/trackCoordinates";
 
 export interface CircuitTrackSilhouetteProps {
   /**
@@ -58,9 +62,24 @@ const VECTOR_CIRCUITS: Record<
     strokeOuter: 48,
     strokeInner: 16,
   },
+  mexico: {
+    path: MEXICO_OFFICIAL_PATH,
+    viewBox: "40 25 460 350",
+    strokeOuter: 28,
+    strokeInner: 10,
+  },
+  austin: {
+    path: AUSTIN_OFFICIAL_PATH,
+    viewBox: "8 14 484 468",
+    strokeOuter: 28,
+    strokeInner: 10,
+  },
 };
 
-function detectVectorCircuit(url?: string | null, title?: string): "singapore" | "lasvegas" | null {
+function detectVectorCircuit(
+  url?: string | null,
+  title?: string
+): "singapore" | "lasvegas" | "mexico" | "austin" | null {
   const text = `${url || ""} ${title || ""}`.toLowerCase();
   if (
     text.includes("singapur") ||
@@ -77,6 +96,23 @@ function detectVectorCircuit(url?: string | null, title?: string): "singapore" |
     text.includes("wiki_lv")
   ) {
     return "lasvegas";
+  }
+  if (
+    text.includes("mexico") ||
+    text.includes("méxico") ||
+    text.includes("rodriguez") ||
+    text.includes("rodríguez") ||
+    text.includes("hermanos")
+  ) {
+    return "mexico";
+  }
+  if (
+    text.includes("austin") ||
+    text.includes("cota") ||
+    text.includes("united states") ||
+    text.includes("estados unidos")
+  ) {
+    return "austin";
   }
   return null;
 }

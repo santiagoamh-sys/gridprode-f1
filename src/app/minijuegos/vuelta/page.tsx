@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 
 import { getCurrentCircuit, type CircuitApexConfig, type CircuitConfig } from "@/data/circuits";
+import { getTrackCoordinates } from "@/utils/trackCoordinates";
 
 const LAP_DURATION_MS = 10000; // 10.0 segundos exactos para la vuelta completa
 const MAX_WEEKLY_ATTEMPTS = 5; // 5 intentos en total por semana (Lunes a Jueves)
@@ -176,9 +177,9 @@ function VueltaRapidaContent() {
   const searchParams = useSearchParams();
   const gpParam = searchParams?.get("gp") || searchParams?.get("gpId");
 
-  // Circuito y Gran Premio activo obtenido dinámicamente de la URL o calendario actual
+  // Circuito y Gran Premio activo leído exclusivamente desde el diccionario oficial de trackCoordinates
   const currentCircuit: CircuitConfig = useMemo(() => {
-    return getCurrentCircuit(gpParam || undefined);
+    return getTrackCoordinates(gpParam || undefined);
   }, [gpParam]);
   const SEMANA_GP_ID = currentCircuit.gpId;
 
