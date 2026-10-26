@@ -191,15 +191,14 @@ function VueltaRapidaContent() {
   const searchParams = useSearchParams();
   const gpParam = searchParams?.get("gp") || searchParams?.get("gpId");
 
-  // Circuito y Gran Premio activo leído exclusivamente desde el diccionario oficial de trackCoordinates.
-  // Si no se pasa como parámetro de URL, detecta automáticamente el GP activo según el calendario oficial.
-  const activeGpId = useMemo(() => gpParam || getCurrentActiveGpId(), [gpParam]);
-  const carreraActiva: CircuitTrackConfig = useMemo(() => {
-    return getTrackCoordinates(activeGpId);
-  }, [activeGpId]);
-  // Alias para retrocompatibilidad total con la UI existente:
-  const currentCircuit = carreraActiva;
-  const SEMANA_GP_ID = carreraActiva.gpId;
+  // Conexión DIRECTA al diccionario oficial de configuración sin useMemo ni estados locales obsoletos.
+  // Se evalúa dinámicamente en cada render para que cualquier edición en trackCoordinates.ts (x, y, progress)
+  // actualice los APEX en pantalla al instante con Fast Refresh / HMR.
+  const activeGpId = gpParam || getCurrentActiveGpId();
+  const currentCircuit: CircuitTrackConfig = getTrackCoordinates(activeGpId);
+  const carreraActiva = currentCircuit;
+  const SEMANA_GP_ID = currentCircuit.gpId;
+  const apexesDependencyKey = JSON.stringify(currentCircuit.apexes);
 
   // Validación de día (Lunes=1 a Jueves=4) e intentos semanales (máx. 5) en Firestore
   const [checkingAccess, setCheckingAccess] = useState<boolean>(true);
@@ -398,7 +397,13 @@ function VueltaRapidaContent() {
     if (timerDisplayRef.current) {
       timerDisplayRef.current.textContent = "0.00s / 10.00s";
     }
-  }, [carreraActiva, pathNodeReady, setDotDomPosition]);
+  }, [
+    currentCircuit.id,
+    currentCircuit.pathD,
+    apexesDependencyKey,
+    pathNodeReady,
+    setDotDomPosition,
+  ]);
 
   // Calcular desglose de puntos y aciertos en tiempo real desde apexResults
   const counts = React.useMemo(() => {
@@ -1830,11 +1835,31 @@ function VueltaRapidaContent() {
                       LARGADA / META
                     </text>
 
-                    {/* Los 8 Indicadores Fijos de APEX sobre las curvas reales de Austin */}
+                    {/* Indicadores de APEX leídos DIRECTAMENTE desde el diccionario oficial de configuración */}
                     {currentCircuit.apexes.map((apex) => {
                       const tier = apexResults[apex.id];
                       const isNext =
                         hasStarted && nextPendingApex?.id === apex.id;
+
+                      // Posicionamiento reactivo directo atado a los valores del diccionario:
+                      // Si x e y están definidos en el diccionario, se atan directamente a cx y cy.
+                      // Si se especifica progress (o si x/y son 0/indefinidos), se calcula en la silueta SVG.
+                      let posX = apex.x;
+                      let posY = apex.y;
+                      if (
+                        (typeof posX !== "number" ||
+                          typeof posY !== "number" ||
+                          (posX === 0 && posY === 0)) &&
+                        typeof apex.progress === "number" &&
+                        trackPathRef.current &&
+                        totalPathLengthRef.current > 0
+                      ) {
+                        const pt = trackPathRef.current.getPointAtLength(
+                          apex.progress * totalPathLengthRef.current
+                        );
+                        posX = Math.round(pt.x * 10) / 10;
+                        posY = Math.round(pt.y * 10) / 10;
+                      }
 
                       let ringColor = "#22D3EE";
                       let badgeBg = "rgba(8, 51, 68, 0.92)";
@@ -1863,15 +1888,15 @@ function VueltaRapidaContent() {
                         badgeText = "#FECACA";
                       }
 
-                      const labelX = apex.x + apex.labelOffsetX;
-                      const labelY = apex.y + apex.labelOffsetY;
+                      const labelX = posX + (apex.labelOffsetX || 0);
+                      const labelY = posY + (apex.labelOffsetY || 0);
 
                       return (
                         <g key={apex.id}>
                           {isNext && (
                             <circle
-                              cx={apex.x}
-                              cy={apex.y}
+                              cx={posX}
+                              cy={posY}
                               r="11"
                               fill="none"
                               stroke="#22D3EE"
@@ -1883,8 +1908,8 @@ function VueltaRapidaContent() {
 
                           {/* Círculo brillante azul/cian fijo sobre el centro exacto del APEX */}
                           <circle
-                            cx={apex.x}
-                            cy={apex.y}
+                            cx={posX}
+                            cy={posY}
                             r="5.5"
                             fill="rgba(6, 182, 212, 0.3)"
                             stroke={ringColor}
@@ -1892,8 +1917,8 @@ function VueltaRapidaContent() {
                             filter="url(#apex-cyan-glow)"
                           />
                           <circle
-                            cx={apex.x}
-                            cy={apex.y}
+                            cx={posX}
+                            cy={posY}
                             r="1.8"
                             fill="#ECFEFF"
                           />
