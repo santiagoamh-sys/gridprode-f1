@@ -36,8 +36,16 @@ import {
   Zap,
 } from "lucide-react";
 
-import { getCurrentCircuit, type CircuitApexConfig, type CircuitConfig } from "@/data/circuits";
-import { getTrackCoordinates } from "@/utils/trackCoordinates";
+import {
+  getCurrentCircuit,
+  type CircuitApexConfig,
+  type CircuitConfig,
+} from "@/data/circuits";
+import {
+  getTrackCoordinates,
+  getCurrentActiveGpId,
+  type CircuitTrackConfig,
+} from "@/utils/trackCoordinates";
 
 const LAP_DURATION_MS = 10000; // 10.0 segundos exactos para la vuelta completa
 const MAX_WEEKLY_ATTEMPTS = 5; // 5 intentos en total por semana (Lunes a Jueves)
@@ -177,11 +185,15 @@ function VueltaRapidaContent() {
   const searchParams = useSearchParams();
   const gpParam = searchParams?.get("gp") || searchParams?.get("gpId");
 
-  // Circuito y Gran Premio activo leído exclusivamente desde el diccionario oficial de trackCoordinates
-  const currentCircuit: CircuitConfig = useMemo(() => {
-    return getTrackCoordinates(gpParam || undefined);
-  }, [gpParam]);
-  const SEMANA_GP_ID = currentCircuit.gpId;
+  // Circuito y Gran Premio activo leído exclusivamente desde el diccionario oficial de trackCoordinates.
+  // Si no se pasa como parámetro de URL, detecta automáticamente el GP activo según el calendario oficial.
+  const activeGpId = useMemo(() => gpParam || getCurrentActiveGpId(), [gpParam]);
+  const carreraActiva: CircuitTrackConfig = useMemo(() => {
+    return getTrackCoordinates(activeGpId);
+  }, [activeGpId]);
+  // Alias para retrocompatibilidad total con la UI existente:
+  const currentCircuit = carreraActiva;
+  const SEMANA_GP_ID = carreraActiva.gpId;
 
   // Validación de día (Lunes=1 a Jueves=4) e intentos semanales (máx. 5) en Firestore
   const [checkingAccess, setCheckingAccess] = useState<boolean>(true);
@@ -213,11 +225,13 @@ function VueltaRapidaContent() {
   const dotGlowRef = useRef<SVGCircleElement | null>(null);
   const dotCoreRef = useRef<SVGCircleElement | null>(null);
   const timerDisplayRef = useRef<HTMLSpanElement | null>(null);
+  const calibratedApexesRef = useRef<CircuitApexConfig[]>([]);
+  const [pathNodeReady, setPathNodeReady] = useState<number>(0);
 
   // Waypoints precalculados para la física de velocidad variable (Largada -> 8 APEX -> Meta)
   const waypointsRef = useRef<TelemetryWaypoint[]>([
     { timeMs: 0, progress: 0 },
-    ...currentCircuit.apexes.map((ap) => ({
+    ...carreraActiva.apexes.map((ap) => ({
       timeMs: ap.idealTimeMs,
       progress: ap.progress,
     })),
@@ -231,54 +245,13 @@ function VueltaRapidaContent() {
   const apexResultsRef = useRef<Record<number, HitTier>>({});
   const apexReactionMsRef = useRef<Record<number, number>>({});
 
-  // Callback ref para calibrar la longitud exacta del <path> y cada APEX apenas se monta en el DOM
+  // Callback ref para asociar el nodo <path> apenas se monta en el DOM
   const setTrackPathNode = useCallback((node: SVGPathElement | null) => {
     trackPathRef.current = node;
     if (node) {
-      try {
-        const totalLen = node.getTotalLength();
-        totalPathLengthRef.current = totalLen;
-
-        if (totalLen > 0) {
-          // Ajuste fino de progreso sobre el SVGPathElement nativo del navegador para precisión sub-píxel
-          const sampleCount = 800;
-          const calibratedApexWaypoints: TelemetryWaypoint[] =
-            currentCircuit.apexes.map((ap) => {
-              let bestProgress = ap.progress;
-              let minSq = Infinity;
-              const minSearch = Math.max(0, ap.progress - 0.04);
-              const maxSearch = Math.min(1, ap.progress + 0.04);
-
-              for (let s = 0; s <= sampleCount; s++) {
-                const p =
-                  minSearch + ((maxSearch - minSearch) * s) / sampleCount;
-                const pt = node.getPointAtLength(p * totalLen);
-                const dx = pt.x - ap.x;
-                const dy = pt.y - ap.y;
-                const distSq = dx * dx + dy * dy;
-                if (distSq < minSq) {
-                  minSq = distSq;
-                  bestProgress = p;
-                }
-              }
-
-              return {
-                timeMs: ap.idealTimeMs,
-                progress: bestProgress,
-              };
-            });
-
-          waypointsRef.current = [
-            { timeMs: 0, progress: 0 },
-            ...calibratedApexWaypoints,
-            { timeMs: LAP_DURATION_MS, progress: 1 },
-          ];
-        }
-      } catch {
-        totalPathLengthRef.current = 0;
-      }
+      setPathNodeReady((prev) => prev + 1);
     }
-  }, [currentCircuit]);
+  }, []);
 
   // Posicionar el punto luminoso (6-8px) en (x, y) directamente sobre el DOM sin re-renderizar React
   const setDotDomPosition = useCallback((x: number, y: number) => {
@@ -294,21 +267,126 @@ function VueltaRapidaContent() {
     }
   }, []);
 
-  // Sincronizar waypoints, longitud y posición inicial si cambia el circuito activo
+  // MOTOR DINÁMICO Y AGNÓSTICO:
+  // Se ejecuta reactivamente ante cualquier cambio en 'carreraActiva' (y al montarse el nodo SVG).
+  // Recalcula getTotalLength(), proyecta dinámicamente las coordenadas (x, y) de cada APEX
+  // sobre el nuevo trazado oficial del calendario y reposiciona los hit zones sin requerir cambios de código semana a semana.
   useEffect(() => {
-    waypointsRef.current = [
-      { timeMs: 0, progress: 0 },
-      ...currentCircuit.apexes.map((ap) => ({
-        timeMs: ap.idealTimeMs,
-        progress: ap.progress,
-      })),
-      { timeMs: LAP_DURATION_MS, progress: 1 },
-    ];
-    if (trackPathRef.current) {
-      setTrackPathNode(trackPathRef.current);
+    const pathEl = trackPathRef.current;
+    if (!pathEl) {
+      waypointsRef.current = [
+        { timeMs: 0, progress: 0 },
+        ...carreraActiva.apexes.map((ap) => ({
+          timeMs: ap.idealTimeMs,
+          progress: ap.progress,
+        })),
+        { timeMs: LAP_DURATION_MS, progress: 1 },
+      ];
+      calibratedApexesRef.current = [...carreraActiva.apexes];
+      setDotDomPosition(carreraActiva.startPoint.x, carreraActiva.startPoint.y);
+      return;
     }
-    setDotDomPosition(currentCircuit.startPoint.x, currentCircuit.startPoint.y);
-  }, [currentCircuit, setTrackPathNode, setDotDomPosition]);
+
+    try {
+      const totalLen = pathEl.getTotalLength();
+      totalPathLengthRef.current = totalLen;
+
+      if (totalLen > 0) {
+        // Muestreo denso global de 1000 puntos a lo largo del path SVG
+        const SAMPLES = 1000;
+        const sampledPoints: Array<{ p: number; x: number; y: number }> = [];
+        for (let s = 0; s <= SAMPLES; s++) {
+          const p = s / SAMPLES;
+          const pt = pathEl.getPointAtLength(p * totalLen);
+          sampledPoints.push({ p, x: pt.x, y: pt.y });
+        }
+
+        // Mapeo dinámico de hit zones para cada APEX del circuito activo
+        const calibratedApexes: CircuitApexConfig[] = carreraActiva.apexes.map(
+          (ap) => {
+            let bestP = ap.progress ?? 0;
+            let minSq = Infinity;
+
+            // 1. Búsqueda global a lo largo de toda la pista oficial
+            for (let i = 0; i < sampledPoints.length; i++) {
+              const sp = sampledPoints[i];
+              const dx = sp.x - ap.x;
+              const dy = sp.y - ap.y;
+              const distSq = dx * dx + dy * dy;
+              if (distSq < minSq) {
+                minSq = distSq;
+                bestP = sp.p;
+              }
+            }
+
+            // 2. Refinamiento fino local (±0.02 con 50 pasos) para máxima precisión
+            const localSteps = 50;
+            const searchHalfWidth = 0.02;
+            const minSearch = Math.max(0, bestP - searchHalfWidth);
+            const maxSearch = Math.min(1, bestP + searchHalfWidth);
+            for (let j = 0; j <= localSteps; j++) {
+              const p = minSearch + ((maxSearch - minSearch) * j) / localSteps;
+              const pt = pathEl.getPointAtLength(p * totalLen);
+              const dx = pt.x - ap.x;
+              const dy = pt.y - ap.y;
+              const distSq = dx * dx + dy * dy;
+              if (distSq < minSq) {
+                minSq = distSq;
+                bestP = p;
+              }
+            }
+
+            const idealTimeMs =
+              ap.idealTimeMs || Math.round(bestP * LAP_DURATION_MS);
+
+            return {
+              ...ap,
+              progress: bestP,
+              idealTime: idealTimeMs / 1000,
+              idealTimeMs,
+            };
+          }
+        );
+
+        // Ordenar los waypoints por progreso para garantizar la monotonicidad física de Hermite
+        const sortedApexes = [...calibratedApexes].sort(
+          (a, b) => a.progress - b.progress
+        );
+
+        waypointsRef.current = [
+          { timeMs: 0, progress: 0 },
+          ...sortedApexes.map((ap) => ({
+            timeMs: ap.idealTimeMs,
+            progress: ap.progress,
+          })),
+          { timeMs: LAP_DURATION_MS, progress: 1 },
+        ];
+        calibratedApexesRef.current = sortedApexes;
+      }
+    } catch (err) {
+      console.error(
+        "Error al calcular getTotalLength y mapear hit zones para carreraActiva:",
+        err
+      );
+    }
+
+    // Reposicionar móvil en la largada oficial y resetear estado de vuelta limpia
+    setDotDomPosition(carreraActiva.startPoint.x, carreraActiva.startPoint.y);
+    isRunningRef.current = false;
+    hasFinishedLapRef.current = false;
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    setHasStarted(false);
+    setIsFinished(false);
+    setApexResults({});
+    apexResultsRef.current = {};
+    apexReactionMsRef.current = {};
+    if (timerDisplayRef.current) {
+      timerDisplayRef.current.textContent = "0.00s / 10.00s";
+    }
+  }, [carreraActiva, pathNodeReady, setDotDomPosition]);
 
   // Calcular desglose de puntos y aciertos en tiempo real desde apexResults
   const counts = React.useMemo(() => {
@@ -626,7 +704,11 @@ function VueltaRapidaContent() {
       ...apexReactionMsRef.current,
     };
 
-    currentCircuit.apexes.forEach((ap) => {
+    const activeApexes = calibratedApexesRef.current.length > 0
+      ? calibratedApexesRef.current
+      : carreraActiva.apexes;
+
+    activeApexes.forEach((ap) => {
       if (!finalMap[ap.id]) {
         finalMap[ap.id] = "rojo";
       }
@@ -645,7 +727,7 @@ function VueltaRapidaContent() {
       else if (tier === "amarillo") puntajeTotal += 1;
     });
 
-    const tiempoReaccionTotal = currentCircuit.apexes.reduce(
+    const tiempoReaccionTotal = activeApexes.reduce(
       (acc, ap) => acc + (finalReactionMap[ap.id] ?? MISS_PENALTY_MS),
       0
     );
@@ -883,7 +965,9 @@ function VueltaRapidaContent() {
       }
 
       // Marcar automáticamente como ROJO (0 pts) cualquier APEX no presionado tras > 0.1s (100ms)
-      const apexes = currentCircuit.apexes;
+      const apexes = calibratedApexesRef.current.length > 0
+        ? calibratedApexesRef.current
+        : carreraActiva.apexes;
       for (let i = 0; i < apexes.length; i++) {
         const ap = apexes[i];
         if (!apexResultsRef.current[ap.id]) {
@@ -949,7 +1033,10 @@ function VueltaRapidaContent() {
       LAP_DURATION_MS
     );
 
-    const pendingApexes = currentCircuit.apexes.filter(
+    const activeApexes = calibratedApexesRef.current.length > 0
+      ? calibratedApexesRef.current
+      : carreraActiva.apexes;
+    const pendingApexes = activeApexes.filter(
       (ap) => !apexResultsRef.current[ap.id]
     );
     if (pendingApexes.length === 0) return;
@@ -1015,8 +1102,11 @@ function VueltaRapidaContent() {
 
   // Próximo APEX pendiente para resaltarlo en pista
   const nextPendingApex = React.useMemo(() => {
-    return currentCircuit.apexes.find((ap) => !apexResults[ap.id]) || null;
-  }, [apexResults, currentCircuit]);
+    const activeApexes = calibratedApexesRef.current.length > 0
+      ? calibratedApexesRef.current
+      : carreraActiva.apexes;
+    return activeApexes.find((ap) => !apexResults[ap.id]) || null;
+  }, [apexResults, carreraActiva]);
 
   const fastestLapHolder = leaderboard.length > 0 ? leaderboard[0] : null;
   const attemptsRemaining = Math.max(0, MAX_WEEKLY_ATTEMPTS - weeklyAttempts);

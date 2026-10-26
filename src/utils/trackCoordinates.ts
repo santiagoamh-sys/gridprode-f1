@@ -4,6 +4,8 @@
  * tarjetas del Calendario como en el lienzo interactivo del minijuego de Vuelta Rápida.
  */
 
+import { INITIAL_GRAND_PRIX } from "@/data/f1InitialData";
+
 export interface ApexCoordinate {
   id: number; // 1 al 8
   name: string;
@@ -356,10 +358,171 @@ export const austinTrackConfig: CircuitTrackConfig = {
 };
 
 /**
+ * Trazado vectorial oficial del Autódromo José Carlos Pace (Interlagos - Brasil)
+ * Sentido de giro: Antihorario
+ */
+export const BRAZIL_OFFICIAL_PATH =
+  "M 430 90 " +
+  "L 220 90 " +
+  "c -25 0 -45 18 -45 42 " +
+  "l 0 45 " +
+  "c 0 24 18 42 42 42 " +
+  "l 35 0 " +
+  "c 22 0 40 18 40 40 " +
+  "l 0 30 " +
+  "L 292 320 " +
+  "c 0 25 -18 45 -45 45 " +
+  "l -60 0 " +
+  "c -25 0 -45 -18 -45 -45 " +
+  "l 0 -35 " +
+  "c 0 -22 18 -40 40 -40 " +
+  "l 75 0 " +
+  "c 25 0 45 20 45 45 " +
+  "l 0 35 " +
+  "c 0 25 20 45 45 45 " +
+  "l 50 0 " +
+  "c 20 0 35 -15 35 -35 " +
+  "l 0 -40 " +
+  "c 0 -20 -15 -35 -35 -35 " +
+  "l -45 0 " +
+  "c -20 0 -35 15 -35 35 " +
+  "l 0 25 " +
+  "c 0 20 16 38 38 38 " +
+  "l 55 0 " +
+  "c 25 0 45 -20 45 -45 " +
+  "l 0 -115 " +
+  "c 0 -25 -20 -45 -45 -45 " +
+  "L 430 90 Z";
+
+export const brazilTrackConfig: CircuitTrackConfig = {
+  id: "brazil_interlagos_2026",
+  gpId: "gp-brasil-2026",
+  name: "Autódromo José Carlos Pace (Interlagos)",
+  grandPrix: "GP de São Paulo • Interlagos",
+  viewBox: "0 10 520 440",
+  direction: "Antihorario",
+  startPoint: { x: 330, y: 90, angleDeg: 180 },
+  pathD: BRAZIL_OFFICIAL_PATH,
+  apexes: [
+    {
+      id: 1,
+      name: "Curva 1 (S de Senna - Frenada)",
+      x: 175,
+      y: 135,
+      progress: 0.125,
+      idealTime: 1.25,
+      idealTimeMs: 1250,
+      labelOffsetX: -38,
+      labelOffsetY: 4,
+    },
+    {
+      id: 2,
+      name: "Curva 2 (S de Senna - Salida)",
+      x: 215,
+      y: 218,
+      progress: 0.215,
+      idealTime: 2.15,
+      idealTimeMs: 2150,
+      labelOffsetX: -36,
+      labelOffsetY: 12,
+    },
+    {
+      id: 3,
+      name: "Curva 4 (Descida do Lago)",
+      x: 245,
+      y: 365,
+      progress: 0.355,
+      idealTime: 3.55,
+      idealTimeMs: 3550,
+      labelOffsetX: -40,
+      labelOffsetY: 14,
+    },
+    {
+      id: 4,
+      name: "Curva 5 (Salida do Lago)",
+      x: 180,
+      y: 275,
+      progress: 0.455,
+      idealTime: 4.55,
+      idealTimeMs: 4550,
+      labelOffsetX: -38,
+      labelOffsetY: -12,
+    },
+    {
+      id: 5,
+      name: "Curvas 6-7 (Ferradura)",
+      x: 340,
+      y: 310,
+      progress: 0.585,
+      idealTime: 5.85,
+      idealTimeMs: 5850,
+      labelOffsetX: 38,
+      labelOffsetY: 4,
+    },
+    {
+      id: 6,
+      name: "Curva 8 (Pinheirinho)",
+      x: 390,
+      y: 240,
+      progress: 0.695,
+      idealTime: 6.95,
+      idealTimeMs: 6950,
+      labelOffsetX: 38,
+      labelOffsetY: -8,
+    },
+    {
+      id: 7,
+      name: "Curva 9 (Bico de Pato)",
+      x: 345,
+      y: 165,
+      progress: 0.805,
+      idealTime: 8.05,
+      idealTimeMs: 8050,
+      labelOffsetX: -38,
+      labelOffsetY: -8,
+    },
+    {
+      id: 8,
+      name: "Curva 11 (Junção / Subida dos Boxes)",
+      x: 440,
+      y: 180,
+      progress: 0.915,
+      idealTime: 9.15,
+      idealTimeMs: 9150,
+      labelOffsetX: 42,
+      labelOffsetY: 4,
+    },
+  ],
+};
+
+/**
+ * Determina dinámicamente el Gran Premio activo del calendario oficial
+ * comparando la fecha/hora actual con los horarios de cada fin de semana de carrera.
+ */
+export function getCurrentActiveGpId(now: Date = new Date()): string {
+  const nowMs = now.getTime();
+  const sorted = [...INITIAL_GRAND_PRIX].sort(
+    (a, b) =>
+      new Date(a.carreraStartTime || a.qualyStartTime || 0).getTime() -
+      new Date(b.carreraStartTime || b.qualyStartTime || 0).getTime()
+  );
+
+  const upcoming = sorted.find((gp) => {
+    const timeStr = gp.carreraStartTime || gp.qualyStartTime;
+    if (!timeStr) return false;
+    // Margen de 6 horas posterior a la largada de la carrera
+    const raceEndMs = new Date(timeStr).getTime() + 6 * 60 * 60 * 1000;
+    return raceEndMs > nowMs;
+  });
+
+  return upcoming ? upcoming.id : sorted[sorted.length - 1].id;
+}
+
+/**
  * Diccionario de trazados y coordenadas indexado por ID del circuito / GP
  */
 export const TRACK_COORDINATES: Record<string, CircuitTrackConfig> = {
-  // México
+  // México (Autódromo Hermanos Rodríguez)
   "gp-mexico-2026": mexicoTrackConfig,
   "mexico_hermanos_rodriguez_2026": mexicoTrackConfig,
   mexico: mexicoTrackConfig,
@@ -368,15 +531,45 @@ export const TRACK_COORDINATES: Record<string, CircuitTrackConfig> = {
   "gp-usa-2026": austinTrackConfig,
   "austin_cota_2026": austinTrackConfig,
   austin: austinTrackConfig,
+
+  // Brasil (Interlagos)
+  "gp-brasil-2026": brazilTrackConfig,
+  "brazil_interlagos_2026": brazilTrackConfig,
+  brazil: brazilTrackConfig,
+  brasil: brazilTrackConfig,
 };
 
 /**
- * Obtiene la configuración del circuito buscándolo por su ID de GP o clave de circuito
+ * Obtiene la configuración del circuito buscándolo por su ID de GP o clave de circuito.
+ * Si no se especifica, resuelve de forma 100% automática y agnóstica la carrera activa actual
+ * según el calendario de la F1.
  */
 export function getTrackCoordinates(circuitId?: string): CircuitTrackConfig {
-  if (circuitId && TRACK_COORDINATES[circuitId]) {
-    return TRACK_COORDINATES[circuitId];
+  const targetId = circuitId || getCurrentActiveGpId();
+  if (targetId && TRACK_COORDINATES[targetId]) {
+    return TRACK_COORDINATES[targetId];
   }
-  // Fallback por defecto a México si estamos en la semana activa de México
+
+  // Búsqueda inteligente por coincidencias en el calendario
+  const gpInfo = INITIAL_GRAND_PRIX.find((g) => g.id === targetId);
+  if (gpInfo) {
+    const text = `${gpInfo.id} ${gpInfo.nombre} ${gpInfo.circuito} ${gpInfo.pais}`.toLowerCase();
+    if (text.includes("mexic") || text.includes("méxic") || text.includes("rodriguez")) {
+      return TRACK_COORDINATES["gp-mexico-2026"];
+    }
+    if (text.includes("brasil") || text.includes("brazil") || text.includes("interlagos") || text.includes("pace")) {
+      return TRACK_COORDINATES["gp-brasil-2026"];
+    }
+    if (text.includes("usa") || text.includes("estados unidos") || text.includes("austin") || text.includes("cota")) {
+      return TRACK_COORDINATES["gp-usa-2026"];
+    }
+  }
+
+  // Fallback seguro a la carrera activa o México
+  const activeGpId = getCurrentActiveGpId();
+  if (activeGpId && TRACK_COORDINATES[activeGpId]) {
+    return TRACK_COORDINATES[activeGpId];
+  }
+
   return TRACK_COORDINATES["gp-mexico-2026"] || mexicoTrackConfig;
 }

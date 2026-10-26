@@ -3,6 +3,7 @@ import {
   TRACK_COORDINATES,
   mexicoTrackConfig,
   austinTrackConfig,
+  brazilTrackConfig,
   type ApexCoordinate,
   type CircuitTrackConfig,
 } from "@/utils/trackCoordinates";
@@ -26,137 +27,8 @@ export const mexicoCircuit: CircuitConfig = mexicoTrackConfig;
  * Silueta vectorial oficial del Autódromo José Carlos Pace (Interlagos - Brasil)
  * Sentido: Antihorario
  */
-export const brazilCircuit: CircuitConfig = {
-  id: "brazil_interlagos_2026",
-  gpId: "gp-brasil-2026",
-  name: "Autódromo José Carlos Pace (Interlagos)",
-  grandPrix: "GP de São Paulo • Interlagos",
-  viewBox: "0 10 520 440",
-  direction: "Antihorario",
-  startPoint: { x: 330, y: 90, angleDeg: 180 },
-  pathD:
-    "M 430 90 " +
-    "L 220 90 " +
-    "c -25 0 -45 18 -45 42 " +
-    "l 0 45 " +
-    "c 0 24 18 42 42 42 " +
-    "l 35 0 " +
-    "c 22 0 40 18 40 40 " +
-    "l 0 30 " +
-    "L 292 320 " +
-    "c 0 25 -18 45 -45 45 " +
-    "l -60 0 " +
-    "c -25 0 -45 -18 -45 -45 " +
-    "l 0 -35 " +
-    "c 0 -22 18 -40 40 -40 " +
-    "l 75 0 " +
-    "c 25 0 45 20 45 45 " +
-    "l 0 35 " +
-    "c 0 25 20 45 45 45 " +
-    "l 50 0 " +
-    "c 20 0 35 -15 35 -35 " +
-    "l 0 -40 " +
-    "c 0 -20 -15 -35 -35 -35 " +
-    "l -45 0 " +
-    "c -20 0 -35 15 -35 35 " +
-    "l 0 25 " +
-    "c 0 20 16 38 38 38 " +
-    "l 55 0 " +
-    "c 25 0 45 -20 45 -45 " +
-    "l 0 -115 " +
-    "c 0 -25 -20 -45 -45 -45 " +
-    "L 430 90 Z",
-  apexes: [
-    {
-      id: 1,
-      name: "Curva 1 (S de Senna - Frenada)",
-      x: 175,
-      y: 135,
-      progress: 0.125,
-      idealTime: 1.25,
-      idealTimeMs: 1250,
-      labelOffsetX: -38,
-      labelOffsetY: 4,
-    },
-    {
-      id: 2,
-      name: "Curva 2 (S de Senna - Salida)",
-      x: 215,
-      y: 218,
-      progress: 0.215,
-      idealTime: 2.15,
-      idealTimeMs: 2150,
-      labelOffsetX: -36,
-      labelOffsetY: 12,
-    },
-    {
-      id: 3,
-      name: "Curva 4 (Descida do Lago)",
-      x: 245,
-      y: 365,
-      progress: 0.355,
-      idealTime: 3.55,
-      idealTimeMs: 3550,
-      labelOffsetX: -40,
-      labelOffsetY: 14,
-    },
-    {
-      id: 4,
-      name: "Curva 5 (Salida do Lago)",
-      x: 180,
-      y: 275,
-      progress: 0.455,
-      idealTime: 4.55,
-      idealTimeMs: 4550,
-      labelOffsetX: -38,
-      labelOffsetY: -12,
-    },
-    {
-      id: 5,
-      name: "Curvas 6-7 (Ferradura)",
-      x: 340,
-      y: 310,
-      progress: 0.585,
-      idealTime: 5.85,
-      idealTimeMs: 5850,
-      labelOffsetX: 38,
-      labelOffsetY: 4,
-    },
-    {
-      id: 6,
-      name: "Curva 8 (Pinheirinho)",
-      x: 390,
-      y: 240,
-      progress: 0.695,
-      idealTime: 6.95,
-      idealTimeMs: 6950,
-      labelOffsetX: 38,
-      labelOffsetY: -8,
-    },
-    {
-      id: 7,
-      name: "Curva 9 (Bico de Pato)",
-      x: 345,
-      y: 165,
-      progress: 0.805,
-      idealTime: 8.05,
-      idealTimeMs: 8050,
-      labelOffsetX: -38,
-      labelOffsetY: -8,
-    },
-    {
-      id: 8,
-      name: "Curva 11 (Junção / Subida dos Boxes)",
-      x: 440,
-      y: 180,
-      progress: 0.915,
-      idealTime: 9.15,
-      idealTimeMs: 9150,
-      labelOffsetX: 42,
-      labelOffsetY: 4,
-    },
-  ],
-};
+export const brazilCircuit: CircuitConfig = brazilTrackConfig;
+
 
 // Compatibilidad retroactiva
 export const currentCircuit: CircuitConfig = austinCircuit;
