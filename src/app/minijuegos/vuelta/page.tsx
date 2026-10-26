@@ -195,6 +195,32 @@ function computeF1VariableProgress(
   return 1;
 }
 
+/**
+ * Función matemática unificada para calcular la posición visual (x, y) de un APEX en pantalla.
+ * Utilizada EXACTAMENTE igual tanto por el Modo Juego como por el Modo Edición.
+ * Basada en el progress exportado y getPointAtLength() del path SVG oficial.
+ */
+function getApexVisualPosition(
+  apex: { x: number; y: number; progress?: number },
+  pathEl: SVGPathElement | null
+): { x: number; y: number } {
+  if (pathEl && typeof apex.progress === "number") {
+    try {
+      const totalLen = pathEl.getTotalLength();
+      if (totalLen > 0) {
+        const pt = pathEl.getPointAtLength(apex.progress * totalLen);
+        return {
+          x: Math.round(pt.x * 10) / 10,
+          y: Math.round(pt.y * 10) / 10,
+        };
+      }
+    } catch {
+      // Fallback a coordenadas directas si falla el SVG en el DOM
+    }
+  }
+  return { x: apex.x, y: apex.y };
+}
+
 function VueltaRapidaContent() {
   const { user, profile, loading: authLoading, refreshProfile } = useAuth();
   const searchParams = useSearchParams();
@@ -207,10 +233,11 @@ function VueltaRapidaContent() {
   const currentCircuit = carreraActiva;
   const SEMANA_GP_ID = carreraActiva.gpId;
 
-  // Lectura directa estricta desde el diccionario sin estados intermedios
-  const currentApexes =
+  // Lectura directa estricta en tiempo real desde trackCoordinates[id].apexes sin estados intermedios ni caché
+  const currentApexes: ApexCoordinate[] =
     trackCoordinates[carreraActiva.id]?.apexes ||
     trackCoordinates[carreraActiva.gpId]?.apexes ||
+    trackCoordinates[activeGpId]?.apexes ||
     carreraActiva.apexes;
 
   const apexesDependencyKey = JSON.stringify(currentApexes);
@@ -261,7 +288,6 @@ function VueltaRapidaContent() {
   const dotGlowRef = useRef<SVGCircleElement | null>(null);
   const dotCoreRef = useRef<SVGCircleElement | null>(null);
   const timerDisplayRef = useRef<HTMLSpanElement | null>(null);
-  const calibratedApexesRef = useRef<CircuitApexConfig[]>([...currentApexes]);
   const curvatureProfileRef = useRef<CurvatureSpeedProfile | null>(null);
   const [pathNodeReady, setPathNodeReady] = useState<number>(0);
 
@@ -309,120 +335,35 @@ function VueltaRapidaContent() {
 
   // MOTOR DINÁMICO Y AGNÓSTICO:
   // Se ejecuta reactivamente ante cualquier cambio en 'carreraActiva' (y al montarse el nodo SVG).
-  // Recalcula getTotalLength(), proyecta dinámicamente las coordenadas (x, y) de cada APEX
-  // sobre el nuevo trazado oficial del calendario y reposiciona los hit zones sin requerir cambios de código semana a semana.
+  // Calcula el perfil de curvatura de la pista y sincroniza los waypoints de telemetría directamente desde currentApexes.
   useEffect(() => {
+    // Sincronizar waypoints de telemetría directamente desde currentApexes (sin cachés intermedias)
+    waypointsRef.current = [
+      { timeMs: 0, progress: 0 },
+      ...currentApexes.map((ap) => ({
+        timeMs: ap.idealTimeMs,
+        progress: ap.progress,
+      })),
+      { timeMs: LAP_DURATION_MS, progress: 1 },
+    ];
+
     const pathEl = trackPathRef.current;
-    if (!pathEl) {
-      waypointsRef.current = [
-        { timeMs: 0, progress: 0 },
-        ...currentApexes.map((ap) => ({
-          timeMs: ap.idealTimeMs,
-          progress: ap.progress,
-        })),
-        { timeMs: LAP_DURATION_MS, progress: 1 },
-      ];
-      calibratedApexesRef.current = [...currentApexes];
-      setDotDomPosition(carreraActiva.startPoint.x, carreraActiva.startPoint.y);
-      return;
-    }
+    if (pathEl) {
+      try {
+        const totalLen = pathEl.getTotalLength();
+        totalPathLengthRef.current = totalLen;
 
-    try {
-      const totalLen = pathEl.getTotalLength();
-      totalPathLengthRef.current = totalLen;
-
-      if (totalLen > 0) {
-        // 1. Evaluación dinámica de curvatura del SVG (Independiente de los APEX):
-        // Analiza tangentes, cambio de ángulo, desaceleración en curvas y aceleración en rectas
-        const profile = computeCurvatureSpeedProfile(pathEl, LAP_DURATION_MS, 600);
-        curvatureProfileRef.current = profile;
-
-        // 2. Muestreo denso global de 1000 puntos para proyectar cada APEX sobre el trazado oficial
-        const SAMPLES = 1000;
-        const sampledPoints: Array<{ p: number; x: number; y: number }> = [];
-        for (let s = 0; s <= SAMPLES; s++) {
-          const p = s / SAMPLES;
-          const pt = pathEl.getPointAtLength(p * totalLen);
-          sampledPoints.push({ p, x: pt.x, y: pt.y });
+        if (totalLen > 0) {
+          // Evaluación dinámica de curvatura del SVG (Independiente de los APEX):
+          const profile = computeCurvatureSpeedProfile(pathEl, LAP_DURATION_MS, 600);
+          curvatureProfileRef.current = profile;
         }
-
-        // 3. Mapeo de APEX y calibración de tiempos ideales según la física real de la pista
-        const calibratedApexes: CircuitApexConfig[] = currentApexes.map(
-          (ap) => {
-            let bestP = typeof ap.progress === "number" ? ap.progress : 0;
-            let posX = ap.x;
-            let posY = ap.y;
-
-            if (typeof ap.progress === "number" && totalLen > 0) {
-              const pt = pathEl.getPointAtLength(ap.progress * totalLen);
-              posX = Math.round(pt.x * 10) / 10;
-              posY = Math.round(pt.y * 10) / 10;
-            } else {
-              // Búsqueda global del progreso más cercano al punto (x, y) del APEX
-              let minSq = Infinity;
-              for (let i = 0; i < sampledPoints.length; i++) {
-                const sp = sampledPoints[i];
-                const dx = sp.x - ap.x;
-                const dy = sp.y - ap.y;
-                const distSq = dx * dx + dy * dy;
-                if (distSq < minSq) {
-                  minSq = distSq;
-                  bestP = sp.p;
-                }
-              }
-
-              // Refinamiento fino local (±0.02 con 50 pasos) para máxima precisión
-              const localSteps = 50;
-              const searchHalfWidth = 0.02;
-              const minSearch = Math.max(0, bestP - searchHalfWidth);
-              const maxSearch = Math.min(1, bestP + searchHalfWidth);
-              for (let j = 0; j <= localSteps; j++) {
-                const p = minSearch + ((maxSearch - minSearch) * j) / localSteps;
-                const pt = pathEl.getPointAtLength(p * totalLen);
-                const dx = pt.x - ap.x;
-                const dy = pt.y - ap.y;
-                const distSq = dx * dx + dy * dy;
-                if (distSq < minSq) {
-                  minSq = distSq;
-                  bestP = p;
-                }
-              }
-            }
-
-            // El idealTimeMs se calcula directamente del perfil de físicas por curvatura
-            const idealTimeMs = getTimeFromProgress(profile, bestP);
-
-            return {
-              ...ap,
-              x: posX,
-              y: posY,
-              progress: bestP,
-              idealTime: idealTimeMs / 1000,
-              idealTimeMs,
-            };
-          }
+      } catch (err) {
+        console.error(
+          "Error al calcular perfil de curvatura para carreraActiva:",
+          err
         );
-
-        // Ordenar los waypoints por progreso para garantizar la monotonicidad física
-        const sortedApexes = [...calibratedApexes].sort(
-          (a, b) => a.progress - b.progress
-        );
-
-        waypointsRef.current = [
-          { timeMs: 0, progress: 0 },
-          ...sortedApexes.map((ap) => ({
-            timeMs: ap.idealTimeMs,
-            progress: ap.progress,
-          })),
-          { timeMs: LAP_DURATION_MS, progress: 1 },
-        ];
-        calibratedApexesRef.current = sortedApexes;
       }
-    } catch (err) {
-      console.error(
-        "Error al calcular getTotalLength y mapear hit zones para carreraActiva:",
-        err
-      );
     }
 
     // Reposicionar móvil en la largada oficial y resetear estado de vuelta limpia
@@ -447,6 +388,9 @@ function VueltaRapidaContent() {
     apexesDependencyKey,
     pathNodeReady,
     setDotDomPosition,
+    currentApexes,
+    carreraActiva.startPoint.x,
+    carreraActiva.startPoint.y,
   ]);
 
   // Calcular desglose de puntos y aciertos en tiempo real desde apexResults
@@ -706,11 +650,13 @@ function VueltaRapidaContent() {
         rojo: { text: "¡ROJO! +0", defaultSub: "> 100ms • FUERA DE TIEMPO" },
       };
 
+      const pos = getApexVisualPosition(apex, trackPathRef.current);
+
       const item: FloatingFeedback = {
         key: `${apex.id}-${performance.now()}`,
         apexId: apex.id,
-        x: Math.min(410, Math.max(85, apex.x)),
-        y: Math.max(48, apex.y),
+        x: Math.min(410, Math.max(85, pos.x)),
+        y: Math.max(48, pos.y),
         text: config[tier].text,
         subtext: customSubtext || config[tier].defaultSub,
         tier,
@@ -765,11 +711,7 @@ function VueltaRapidaContent() {
       ...apexReactionMsRef.current,
     };
 
-    const activeApexes = calibratedApexesRef.current.length > 0
-      ? calibratedApexesRef.current
-      : currentApexes;
-
-    activeApexes.forEach((ap) => {
+    currentApexes.forEach((ap) => {
       if (!finalMap[ap.id]) {
         finalMap[ap.id] = "rojo";
       }
@@ -788,7 +730,7 @@ function VueltaRapidaContent() {
       else if (tier === "amarillo") puntajeTotal += 1;
     });
 
-    const tiempoReaccionTotal = activeApexes.reduce(
+    const tiempoReaccionTotal = currentApexes.reduce(
       (acc, ap) => acc + (finalReactionMap[ap.id] ?? MISS_PENALTY_MS),
       0
     );
@@ -1026,11 +968,8 @@ function VueltaRapidaContent() {
       }
 
       // Marcar automáticamente como ROJO (0 pts) cualquier APEX no presionado tras > 0.1s (100ms)
-      const apexes = calibratedApexesRef.current.length > 0
-        ? calibratedApexesRef.current
-        : currentApexes;
-      for (let i = 0; i < apexes.length; i++) {
-        const ap = apexes[i];
+      for (let i = 0; i < currentApexes.length; i++) {
+        const ap = currentApexes[i];
         if (!apexResultsRef.current[ap.id]) {
           if (clampedElapsed > ap.idealTimeMs + missToleranceMs) {
             recordApexOutcomeRef.current(
@@ -1053,7 +992,7 @@ function VueltaRapidaContent() {
 
     // Ejecutar el primer paso de inmediato (0ms de espera)
     tick(startTimestamp);
-  }, [setDotDomPosition, currentCircuit]);
+  }, [setDotDomPosition, currentCircuit, currentApexes]);
 
   // Limpiar animación al desmontar el componente
   useEffect(() => {
@@ -1094,10 +1033,7 @@ function VueltaRapidaContent() {
       LAP_DURATION_MS
     );
 
-    const activeApexes = calibratedApexesRef.current.length > 0
-      ? calibratedApexesRef.current
-      : currentApexes;
-    const pendingApexes = activeApexes.filter(
+    const pendingApexes = currentApexes.filter(
       (ap) => !apexResultsRef.current[ap.id]
     );
     if (pendingApexes.length === 0) return;
@@ -1139,7 +1075,7 @@ function VueltaRapidaContent() {
       // > 0.1s (100ms): ROJO 🔴 (0 pts)
       recordApexOutcome(closestApex, "rojo", roundedDiffMs, `Δ ${deltaMsText}`);
     }
-  }, [recordApexOutcome, currentCircuit]);
+  }, [recordApexOutcome, currentCircuit, currentApexes]);
 
   // Reiniciar para otro intento (si le quedan intentos de la semana)
   const handleResetToIdle = useCallback(() => {
@@ -1163,10 +1099,7 @@ function VueltaRapidaContent() {
 
   // Próximo APEX pendiente para resaltarlo en pista
   const nextPendingApex = React.useMemo(() => {
-    const activeApexes = calibratedApexesRef.current.length > 0
-      ? calibratedApexesRef.current
-      : currentApexes;
-    return activeApexes.find((ap) => !apexResults[ap.id]) || null;
+    return currentApexes.find((ap) => !apexResults[ap.id]) || null;
   }, [apexResults, currentApexes]);
 
   // =========================================================================
@@ -2048,7 +1981,7 @@ function VueltaRapidaContent() {
                   /* Sub-barra informativa compacta */
                   <div className="relative z-10 flex flex-wrap items-center justify-between gap-1.5 px-2 pt-1 pb-1 text-[10px] sm:text-[11px] font-bold text-[#8E8E93]">
                     <span>
-                      Giro <strong className="text-white">Antihorario</strong> • El
+                      Giro <strong className="text-white">{currentCircuit.direction}</strong> • El
                       punto acelera en rectas y frena al llegar a cada{" "}
                       <strong className="text-cyan-400">APEX (1 al 8)</strong>
                     </span>
@@ -2118,7 +2051,7 @@ function VueltaRapidaContent() {
                       strokeLinejoin="round"
                     />
 
-                    {/* Pista principal gris oscuro semi-translúcido (Path oficial de Austin para getPointAtLength) */}
+                    {/* Pista principal gris oscuro semi-translúcido */}
                     <path
                       ref={setTrackPathNode}
                       d={currentCircuit.pathD}
@@ -2140,7 +2073,7 @@ function VueltaRapidaContent() {
                       strokeLinejoin="round"
                     />
 
-                    {/* Línea de Largada / Meta sobre la recta principal de Austin */}
+                    {/* Línea de Largada / Meta sobre la recta principal del circuito activo */}
                     <g
                       transform={`translate(${currentCircuit.startPoint.x}, ${currentCircuit.startPoint.y}) rotate(${currentCircuit.startPoint.angleDeg})`}
                     >
@@ -2179,15 +2112,16 @@ function VueltaRapidaContent() {
                     {isEditMode ? (
                       <>
                         {editedApexes.map((apex) => {
-                          const labelX = apex.x + (apex.labelOffsetX || 0);
-                          const labelY = apex.y + (apex.labelOffsetY || 0);
+                          const pos = getApexVisualPosition(apex, trackPathRef.current);
+                          const labelX = pos.x + (apex.labelOffsetX || 0);
+                          const labelY = pos.y + (apex.labelOffsetY || 0);
 
                           return (
                             <g key={apex.id} className="cursor-pointer">
                               {/* Círculo de pulsación exterior */}
                               <circle
-                                cx={apex.x}
-                                cy={apex.y}
+                                cx={pos.x}
+                                cy={pos.y}
                                 r="12"
                                 fill="none"
                                 stroke="#F59E0B"
@@ -2198,8 +2132,8 @@ function VueltaRapidaContent() {
 
                               {/* Círculo central cian */}
                               <circle
-                                cx={apex.x}
-                                cy={apex.y}
+                                cx={pos.x}
+                                cy={pos.y}
                                 r="6.5"
                                 fill="rgba(6, 182, 212, 0.45)"
                                 stroke="#22D3EE"
@@ -2207,8 +2141,8 @@ function VueltaRapidaContent() {
                                 filter="url(#apex-cyan-glow)"
                               />
                               <circle
-                                cx={apex.x}
-                                cy={apex.y}
+                                cx={pos.x}
+                                cy={pos.y}
                                 r="2.2"
                                 fill="#ECFEFF"
                               />
@@ -2297,36 +2231,15 @@ function VueltaRapidaContent() {
                         )}
                       </>
                     ) : (
-                      /* MODO NORMAL: Indicadores oficiales leídos de trackCoordinates */
+                      /* MODO NORMAL: Indicadores oficiales leídos estrictamente de trackCoordinates */
                       currentApexes.map((apex) => {
                         const tier = apexResults[apex.id];
                         const isNext =
                           hasStarted && nextPendingApex?.id === apex.id;
 
-                        // CÁLCULO VISUAL DIRECTO EN EL RENDER:
-                        // Si apex.progress está definido y el path SVG está disponible, calcula (posX, posY)
-                        // directamente con getPointAtLength(progress * totalLength) para alimentar cx y cy:
-                        let posX = apex.x;
-                        let posY = apex.y;
-
-                        if (typeof apex.progress === "number" && trackPathRef.current) {
-                          try {
-                            const totalLen =
-                              totalPathLengthRef.current > 0
-                                ? totalPathLengthRef.current
-                                : trackPathRef.current.getTotalLength();
-                            if (totalLen > 0) {
-                              const pt = trackPathRef.current.getPointAtLength(
-                                apex.progress * totalLen
-                              );
-                              posX = Math.round(pt.x * 10) / 10;
-                              posY = Math.round(pt.y * 10) / 10;
-                            }
-                          } catch {
-                            posX = apex.x;
-                            posY = apex.y;
-                          }
-                        }
+                        // CÁLCULO VISUAL UNIFICADO DIRECTO EN EL RENDER:
+                        // Utiliza exactamente la misma función matemática getApexVisualPosition basada en progress y getPointAtLength()
+                        const pos = getApexVisualPosition(apex, trackPathRef.current);
 
                         let ringColor = "#22D3EE";
                         let badgeBg = "rgba(8, 51, 68, 0.92)";
@@ -2355,15 +2268,15 @@ function VueltaRapidaContent() {
                           badgeText = "#FECACA";
                         }
 
-                        const labelX = posX + (apex.labelOffsetX || 0);
-                        const labelY = posY + (apex.labelOffsetY || 0);
+                        const labelX = pos.x + (apex.labelOffsetX || 0);
+                        const labelY = pos.y + (apex.labelOffsetY || 0);
 
                         return (
                           <g key={apex.id}>
                             {isNext && (
                               <circle
-                                cx={posX}
-                                cy={posY}
+                                cx={pos.x}
+                                cy={pos.y}
                                 r="11"
                                 fill="none"
                                 stroke="#22D3EE"
@@ -2375,8 +2288,8 @@ function VueltaRapidaContent() {
 
                             {/* Círculo brillante azul/cian fijo sobre el centro exacto del APEX */}
                             <circle
-                              cx={posX}
-                              cy={posY}
+                              cx={pos.x}
+                              cy={pos.y}
                               r="5.5"
                               fill="rgba(6, 182, 212, 0.3)"
                               stroke={ringColor}
@@ -2384,8 +2297,8 @@ function VueltaRapidaContent() {
                               filter="url(#apex-cyan-glow)"
                             />
                             <circle
-                              cx={posX}
-                              cy={posY}
+                              cx={pos.x}
+                              cy={pos.y}
                               r="1.8"
                               fill="#ECFEFF"
                             />
