@@ -46,12 +46,16 @@ export async function processRaceBadgesBatch(
     throw new Error("Firestore no está inicializado. Verifica tus credenciales.");
   }
 
-  // a) Recuperar todas las predicciones de los usuarios para esa carrera
-  const predQuery = query(
-    collection(db, "predicciones"),
-    where("grand_prix_id", "==", grandPrixId)
-  );
-  const predSnap = await getDocs(predQuery);
+  // a) Recuperar las predicciones para esta carrera y todas las predicciones para historial
+  const [predSnap, allPredSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, "predicciones"),
+        where("grand_prix_id", "==", grandPrixId)
+      )
+    ),
+    getDocs(collection(db, "predicciones")),
+  ]);
 
   if (predSnap.empty) {
     return {
@@ -63,13 +67,24 @@ export async function processRaceBadgesBatch(
 
   const predictions = predSnap.docs.map((d) => d.data() as Prediccion);
 
-  // Mapear predicción más reciente por cada usuario_id único
+  // Mapear predicción más reciente por cada usuario_id único para este GP
   const predsByUserId = new Map<string, Prediccion>();
   for (const p of predictions) {
     if (p.usuario_id) {
       predsByUserId.set(p.usuario_id, p);
     }
   }
+
+  // Historial de predicciones por usuario para evaluar rachas (ej. fidelidad_absoluta)
+  const historyByUserId = new Map<string, Prediccion[]>();
+  allPredSnap.docs.forEach((d) => {
+    const data = d.data() as Prediccion;
+    if (data.usuario_id) {
+      const list = historyByUserId.get(data.usuario_id) || [];
+      list.push(data);
+      historyByUserId.set(data.usuario_id, list);
+    }
+  });
 
   const usersSummary: UserBadgeAwardSummary[] = [];
 
@@ -88,12 +103,57 @@ export async function processRaceBadgesBatch(
         ? (userSnap.data() as UserProfile)
         : null;
 
-      const currentProgress = userData?.badges_progress || {};
+      const currentProgress: Record<string, number> = {
+        ...(userData?.badges_progress || {}),
+      };
+
+      // Preservar vueltas_perfectas si ya existía en el perfil o en vueltasPerfectas
+      if (typeof (userData as any)?.vueltasPerfectas === "number") {
+        currentProgress.vueltas_perfectas = Math.max(
+          currentProgress.vueltas_perfectas ?? 0,
+          Number((userData as any).vueltasPerfectas)
+        );
+        currentProgress.vueltasperfectas = currentProgress.vueltas_perfectas;
+      }
+
+      // Evaluar si el usuario tiene racha de 3 GPs consecutivos con el mismo P1
+      const userHistory = historyByUserId.get(userId) || [];
+      userHistory.sort((a, b) => {
+        const getTimestamp = (p: any) => {
+          if (p?.createdAt?.toMillis) return p.createdAt.toMillis();
+          if (p?.createdAt?.seconds) return p.createdAt.seconds * 1000;
+          if (p?.createdAt) return new Date(p.createdAt).getTime();
+          if (p?.created_at) return new Date(p.created_at).getTime();
+          return 0;
+        };
+        return getTimestamp(a) - getTimestamp(b);
+      });
+
+      let isFidelidadStreak = false;
+      let previousPrediction: Prediccion | null = null;
+      if (userHistory.length >= 2) {
+        previousPrediction = userHistory[userHistory.length - 2];
+      }
+      if (userHistory.length >= 3) {
+        const last3 = userHistory.slice(-3);
+        const p1_0 = (last3[0].respuestas?.p1 || (last3[0] as any).p1 || "").trim().toUpperCase();
+        const p1_1 = (last3[1].respuestas?.p1 || (last3[1] as any).p1 || "").trim().toUpperCase();
+        const p1_2 = (last3[2].respuestas?.p1 || (last3[2] as any).p1 || "").trim().toUpperCase();
+        if (p1_0 && p1_0 === p1_1 && p1_1 === p1_2) {
+          isFidelidadStreak = true;
+        }
+      }
 
       const { detailed } = evaluateRaceBadgesDetailed(
         officialResults,
         prediction.respuestas || prediction,
-        currentProgress
+        currentProgress,
+        {
+          isFidelidadStreak,
+          previousPrediction: previousPrediction
+            ? previousPrediction.respuestas || previousPrediction
+            : null,
+        }
       );
 
       userUpdates.push({

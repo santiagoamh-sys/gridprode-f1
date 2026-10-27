@@ -22,6 +22,7 @@ export interface OfficialRaceResults {
   dnfDrivers?: string[] | null;
   dnf_drivers?: string[] | null;
   posicion_colapinto?: number | null;
+  vuelta_rapida?: string | null;
   isSprint?: boolean;
   sprintPole?: string | null;
   sprintP1?: string | null;
@@ -44,6 +45,7 @@ export interface UserRacePrediction {
   dnf?: number | string[] | string | null;
   dnfCount?: number | null;
   posicion_colapinto?: number | null;
+  vuelta_rapida?: string | null;
   sprintPole?: string | null;
   sprintP1?: string | null;
   sprintP2?: string | null;
@@ -56,6 +58,8 @@ export interface UserRacePrediction {
 export interface BadgeEvaluatorOptions {
   driverTeamMap?: Record<string, string>;
   previousPrediction?: UserRacePrediction | null;
+  isFidelidadStreak?: boolean;
+  vueltaPerfectaEarned?: boolean;
 }
 
 /**
@@ -105,11 +109,15 @@ export const TOP_TEAMS = new Set(["RBR", "MER", "FER", "MCL"]);
 export const BADGE_ALIASES: Record<string, string[]> = {
   ojo_clinico: ["ojo_clinico"],
   estratega: ["estratega", "el_estratega"],
+  el_estratega: ["estratega", "el_estratega"],
   asistencia_perfecta: ["asistencia_perfecta"],
   oraculo_caos: ["oraculo_caos", "oraculo_del_caos"],
+  oraculo_del_caos: ["oraculo_caos", "oraculo_del_caos"],
   rey_sabado: ["rey_sabado", "rey_del_sabado"],
+  rey_del_sabado: ["rey_sabado", "rey_del_sabado"],
   pulso_argento: ["pulso_argento"],
   contra_corriente: ["contra_corriente", "contra_la_corriente"],
+  contra_la_corriente: ["contra_corriente", "contra_la_corriente"],
   pleno_perfecto: ["pleno_perfecto"],
   fidelidad_absoluta: ["fidelidad_absoluta"],
   monopolio: ["monopolio"],
@@ -118,6 +126,9 @@ export const BADGE_ALIASES: Record<string, string[]> = {
   carrera_limpia: ["carrera_limpia"],
   caos_ordenado: ["caos_ordenado"],
   maestro_sprint: ["maestro_sprint", "maestro_del_sprint"],
+  maestro_del_sprint: ["maestro_sprint", "maestro_del_sprint"],
+  vueltas_perfectas: ["vueltas_perfectas", "vueltasperfectas"],
+  vueltasperfectas: ["vueltas_perfectas", "vueltasperfectas"],
 };
 
 /**
@@ -171,6 +182,10 @@ function extractPredictionData(userPrediction: UserRacePrediction) {
     ? String(resp.sprintP3).trim().toUpperCase()
     : null;
 
+  const vuelta_rapida = resp.vuelta_rapida
+    ? String(resp.vuelta_rapida).trim().toUpperCase()
+    : null;
+
   return {
     p1,
     p2,
@@ -180,6 +195,7 @@ function extractPredictionData(userPrediction: UserRacePrediction) {
     escuderia,
     dnf,
     posicion_colapinto,
+    vuelta_rapida,
     sprintPole,
     sprintP1,
     sprintP2,
@@ -247,6 +263,10 @@ function extractOfficialData(officialResults: OfficialRaceResults) {
     dnfDrivers.push("COL");
   }
 
+  const vuelta_rapida = officialResults.vuelta_rapida
+    ? String(officialResults.vuelta_rapida).trim().toUpperCase()
+    : null;
+
   const isSprint = Boolean(officialResults.isSprint);
 
   const sprintPole = officialResults.sprintPole
@@ -272,6 +292,7 @@ function extractOfficialData(officialResults: OfficialRaceResults) {
     dnf,
     dnfDrivers,
     posicion_colapinto,
+    vuelta_rapida,
     isSprint,
     sprintPole,
     sprintP1,
@@ -489,15 +510,14 @@ export function evaluateRaceBadgesDetailed(
   applyBadge("pleno_perfecto", isPlenoPerfecto);
 
   // -------------------------------------------------------------------------
-  // 9. fidelidad_absoluta: Suma +1 si el P1 elegido coincide con el P1 de
-  //    su predicción anterior o simplificado si el usuario acierta el P1.
+  // 9. fidelidad_absoluta: Mismo piloto ganador en 3 carreras consecutivas (+1)
   // -------------------------------------------------------------------------
   const prevP1 = options?.previousPrediction
     ? extractPredictionData(options.previousPrediction).p1
     : null;
   const isFidelidadAbsoluta = Boolean(
-    (prevP1 && u.p1 && u.p1 === prevP1) ||
-      (u.p1 && o.p1 && u.p1 === o.p1)
+    options?.isFidelidadStreak ||
+      (prevP1 && u.p1 && u.p1 === prevP1)
   );
   applyBadge("fidelidad_absoluta", isFidelidadAbsoluta);
 
@@ -531,16 +551,15 @@ export function evaluateRaceBadgesDetailed(
   applyBadge("el_mufa", isElMufa);
 
   // -------------------------------------------------------------------------
-  // 12. voto_popular: Acertó el DriverOfDay, pero ese piloto NO está entre
-  //     sus elegidos para P1, P2 o P3.
+  // 12. voto_popular: Piloto del Día pero no quedó en podio P1-P3 (+1)
   // -------------------------------------------------------------------------
   const isVotoPopular = Boolean(
     u.piloto_del_dia &&
       o.piloto_del_dia &&
       u.piloto_del_dia === o.piloto_del_dia &&
-      u.piloto_del_dia !== u.p1 &&
-      u.piloto_del_dia !== u.p2 &&
-      u.piloto_del_dia !== u.p3
+      o.piloto_del_dia !== o.p1 &&
+      o.piloto_del_dia !== o.p2 &&
+      o.piloto_del_dia !== o.p3
   );
   applyBadge("voto_popular", isVotoPopular);
 
@@ -604,6 +623,13 @@ export function evaluateRaceBadgesDetailed(
     o.isSprint && (isSprintMatchStandard || isSprintMatchSprintSession)
   );
   applyBadge("maestro_sprint", isMaestroSprint);
+
+  // -------------------------------------------------------------------------
+  // 16. vueltas_perfectas: Vuelta Perfecta (40 pts en Vuelta Rápida) (+1)
+  // -------------------------------------------------------------------------
+  if (options?.vueltaPerfectaEarned) {
+    applyBadge("vueltas_perfectas", true);
+  }
 
   return {
     detailed: {
