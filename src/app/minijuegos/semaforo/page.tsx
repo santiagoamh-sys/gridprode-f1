@@ -4,6 +4,14 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Navbar } from "@/components/Navbar";
+import { useAuth } from "@/context/AuthContext";
+import {
+  getSemaforoLeaderboard,
+  getUserSemaforoRecord,
+  recordReactionTime,
+  SemaforoRecord,
+} from "@/lib/firebase/semaforoService";
+import { SemaforoLeaderboard } from "@/components/SemaforoLeaderboard";
 import {
   ArrowLeft,
   Timer,
@@ -11,16 +19,29 @@ import {
   Trophy,
   Zap,
   RotateCcw,
+  Sparkles,
 } from "lucide-react";
 
 type GamePhase = "idle" | "sequence" | "lights_out" | "jump_start" | "finished";
 
 export default function SemaforoGamePage() {
+  const { user, profile } = useAuth();
+
   const [phase, setPhase] = useState<GamePhase>("idle");
   const [activeLights, setActiveLights] = useState<number>(0);
   const [reactionTimeMs, setReactionTimeMs] = useState<number | null>(null);
   const [bestTimeMs, setBestTimeMs] = useState<number | null>(null);
   const [attemptsHistory, setAttemptsHistory] = useState<number[]>([]);
+
+  // Leaderboard & Firebase State
+  const [leaderboard, setLeaderboard] = useState<SemaforoRecord[]>([]);
+  const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState<boolean>(true);
+  const [isSavingRecord, setIsSavingRecord] = useState<boolean>(false);
+  const [personalBestNotice, setPersonalBestNotice] = useState<{
+    isNew: boolean;
+    diffMs: number | null;
+    isTop10: boolean;
+  } | null>(null);
 
   const lightsOutTimestampRef = useRef<number>(0);
   const timersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
@@ -36,10 +57,42 @@ export default function SemaforoGamePage() {
     };
   }, [clearAllTimers]);
 
+  // Cargar leaderboard general
+  const loadLeaderboardData = useCallback(async () => {
+    setIsLoadingLeaderboard(true);
+    try {
+      const records = await getSemaforoLeaderboard(10);
+      setLeaderboard(records);
+    } catch (err) {
+      console.error("Error al cargar leaderboard de semáforo:", err);
+    } finally {
+      setIsLoadingLeaderboard(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLeaderboardData();
+  }, [loadLeaderboardData]);
+
+  // Sincronizar el mejor tiempo del usuario desde la base de datos
+  useEffect(() => {
+    if (!user?.uid) return;
+    getUserSemaforoRecord(user.uid)
+      .then((rec) => {
+        if (rec && rec.tiempoMs > 0) {
+          setBestTimeMs(rec.tiempoMs);
+        }
+      })
+      .catch((err) => {
+        console.error("Error al obtener récord del usuario:", err);
+      });
+  }, [user?.uid]);
+
   // Inicia la secuencia de las 5 luces rojas (1 por segundo) + apagado aleatorio (1 a 3 seg)
   const startSequence = () => {
     clearAllTimers();
     setReactionTimeMs(null);
+    setPersonalBestNotice(null);
     setActiveLights(0);
     setPhase("sequence");
 
@@ -72,8 +125,9 @@ export default function SemaforoGamePage() {
     }
 
     if (phase === "sequence") {
-      // El usuario hizo clic antes de que se apagaran las luces -> Jump Start
+      // El usuario hizo clic antes de que se apagaran las luces -> Jump Start (descartado del ranking)
       clearAllTimers();
+      setPersonalBestNotice(null);
       setPhase("jump_start");
       return;
     }
@@ -84,10 +138,52 @@ export default function SemaforoGamePage() {
       const elapsedMs = Math.max(1, Math.round(now - lightsOutTimestampRef.current));
       setReactionTimeMs(elapsedMs);
       setAttemptsHistory((prev) => [elapsedMs, ...prev.slice(0, 4)]);
-      setBestTimeMs((prevBest) =>
-        prevBest === null ? elapsedMs : Math.min(prevBest, elapsedMs)
-      );
       setPhase("finished");
+
+      // Evaluar récord y persistir en Firebase si el usuario está autenticado
+      if (user?.uid) {
+        const userName =
+          profile?.nombre ||
+          profile?.displayName ||
+          user.displayName ||
+          user.email?.split("@")[0] ||
+          "Piloto F1";
+
+        setIsSavingRecord(true);
+        recordReactionTime(user.uid, userName, elapsedMs)
+          .then((res) => {
+            if (res.isNewPersonalBest) {
+              setBestTimeMs(res.record.tiempoMs);
+              const diff =
+                res.previousBestMs !== null
+                  ? res.previousBestMs - res.record.tiempoMs
+                  : null;
+
+              // Comprobar si entra al Top 10 actual
+              const entersTop10 =
+                leaderboard.length < 10 ||
+                res.record.tiempoMs <=
+                  (leaderboard[leaderboard.length - 1]?.tiempoMs ?? 999999);
+
+              setPersonalBestNotice({
+                isNew: true,
+                diffMs: diff,
+                isTop10: entersTop10,
+              });
+
+              // Refrescar inmediatamente el podio
+              loadLeaderboardData();
+            } else {
+              setPersonalBestNotice(null);
+            }
+          })
+          .catch((err) => {
+            console.error("Error al registrar récord en Firebase:", err);
+          })
+          .finally(() => {
+            setIsSavingRecord(false);
+          });
+      }
     }
   };
 
@@ -118,12 +214,22 @@ export default function SemaforoGamePage() {
               <span>Volver al Hub de Minijuegos</span>
             </Link>
 
-            {bestTimeMs !== null && (
-              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs font-black text-amber-300">
-                <Trophy className="w-4 h-4 text-amber-400" />
-                <span>Mejor marca: {formatSeconds(bestTimeMs)}</span>
-              </div>
-            )}
+            <div className="flex items-center gap-3">
+              <a
+                href="#podio-semaforo"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs font-bold text-amber-300 hover:bg-amber-500/20 transition-all"
+              >
+                <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                <span>Ver Podio Top 10</span>
+              </a>
+
+              {bestTimeMs !== null && (
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/15 border border-amber-500/40 text-xs font-black text-amber-300 shadow-sm">
+                  <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                  <span>Tu mejor marca: {formatSeconds(bestTimeMs)}</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Contenedor Principal Dark / Glassmorphism */}
@@ -232,7 +338,7 @@ export default function SemaforoGamePage() {
               )}
 
               {phase === "finished" && reactionTimeMs !== null && (
-                <div className="w-full max-w-md mx-auto rounded-2xl bg-[#15151E]/95 border border-emerald-500/40 p-5 space-y-2 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
+                <div className="w-full max-w-md mx-auto rounded-2xl bg-[#15151E]/95 border border-emerald-500/40 p-5 space-y-3 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
                   <p className="text-[11px] font-black uppercase tracking-widest text-[#8E8E93]">
                     Tiempo Oficial de Reacción
                   </p>
@@ -245,6 +351,33 @@ export default function SemaforoGamePage() {
                   <p className={`text-xs font-bold pt-1 ${getReactionRank(reactionTimeMs).color}`}>
                     {getReactionRank(reactionTimeMs).label}
                   </p>
+
+                  {/* Notificación de Nuevo Récord Personal / Entrada al Top 10 */}
+                  {personalBestNotice?.isNew && (
+                    <div className="rounded-xl bg-gradient-to-r from-amber-500/20 via-amber-400/25 to-amber-500/20 border border-amber-400/60 p-3.5 space-y-1.5 shadow-[0_0_20px_rgba(245,158,11,0.25)] animate-pulse">
+                      <div className="flex items-center justify-center gap-1.5 text-amber-300 font-black text-xs uppercase tracking-wider">
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        <span>¡Nuevo Récord Personal! ⚡</span>
+                      </div>
+                      <p className="text-xs text-amber-100 font-semibold">
+                        {personalBestNotice.diffMs !== null
+                          ? `¡Bajaste tu tiempo oficial anterior en ${personalBestNotice.diffMs} ms!`
+                          : "¡Tu primera marca oficial ha sido guardada en el ranking!"}
+                      </p>
+                      {personalBestNotice.isTop10 && (
+                        <div className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase text-amber-300 bg-black/50 px-2.5 py-1 rounded-full border border-amber-400/40 mt-1">
+                          <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                          <span>¡Entraste al Top 10 de Reflejos de la Parrilla!</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isSavingRecord && (
+                    <p className="text-[10px] text-amber-300/80 italic animate-pulse">
+                      Sincronizando tiempo con el podio global...
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -259,8 +392,8 @@ export default function SemaforoGamePage() {
                 className={`w-full max-w-xl mx-auto min-h-[96px] sm:min-h-[112px] rounded-3xl px-8 py-6 text-xl sm:text-3xl font-black uppercase tracking-widest transition-transform active:scale-[0.98] flex items-center justify-center gap-3 cursor-pointer ${
                   isWaitingForLaunch
                     ? phase === "lights_out"
-                      ? "bg-emerald-500 hover:bg-emerald-400 text-[#09090D] shadow-[0_0_45px_rgba(16,185,129,0.7)] border-2 border-emerald-200"
-                      : "bg-gradient-to-r from-[#E10600] to-amber-600 text-white shadow-[0_0_35px_rgba(225,6,0,0.5)] border-2 border-white/20"
+                    ? "bg-emerald-500 hover:bg-emerald-400 text-[#09090D] shadow-[0_0_45px_rgba(16,185,129,0.7)] border-2 border-emerald-200"
+                    : "bg-gradient-to-r from-[#E10600] to-amber-600 text-white shadow-[0_0_35px_rgba(225,6,0,0.5)] border-2 border-white/20"
                     : "bg-[#15151E] hover:bg-[#252532] text-white border-2 border-[#E10600] shadow-[0_0_25px_rgba(225,6,0,0.3)]"
                 }`}
               >
@@ -298,6 +431,18 @@ export default function SemaforoGamePage() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* ============================================================= */}
+          {/* SECCIÓN PODIO / LEADERBOARD TOP 10                            */}
+          {/* ============================================================= */}
+          <div id="podio-semaforo" className="pt-4 scroll-mt-6">
+            <SemaforoLeaderboard
+              records={leaderboard}
+              currentUserId={user?.uid}
+              isLoading={isLoadingLeaderboard}
+              onRefresh={loadLeaderboardData}
+            />
           </div>
         </main>
       </div>
