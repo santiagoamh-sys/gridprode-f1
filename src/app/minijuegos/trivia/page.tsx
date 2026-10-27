@@ -2,11 +2,20 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase/config";
 import { useAuth } from "@/context/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
-import { Navbar } from "@/components/Navbar";
+import { Navbar, isEmailInInitialAdmins } from "@/components/Navbar";
+import {
+  TriviaConfig,
+  TriviaQuestion,
+  DEFAULT_MEXICO_TRIVIA,
+} from "@/data/triviaData";
+import {
+  getActiveTrivia,
+  checkUserTriviaStatus,
+  saveUserTriviaResult,
+  resetAndPublishTrivia,
+} from "@/lib/firebase/triviaService";
 import {
   Brain,
   ArrowLeft,
@@ -18,87 +27,30 @@ import {
   Sparkles,
   Loader2,
   Lock,
+  RefreshCw,
+  ShieldCheck,
+  Flag,
 } from "lucide-react";
-
-const TRIVIA_ID = "austin_2026";
-
-interface TriviaQuestion {
-  id: number;
-  question: string;
-  options: [string, string, string, string];
-  correctIndex: number;
-  category: string;
-}
-
-const TRIVIA_QUESTIONS: TriviaQuestion[] = [
-  {
-    id: 1,
-    category: "GP de Estados Unidos • Austin (COTA)",
-    question:
-      "¿En qué año se corrió por primera vez el Gran Premio de Estados Unidos en el Circuito de las Américas (COTA)?",
-    options: ["2010", "2012", "2014", "2016"],
-    correctIndex: 1,
-  },
-  {
-    id: 2,
-    category: "GP de Estados Unidos • Austin (COTA)",
-    question:
-      "¿Qué piloto tiene el récord histórico de mayor cantidad de victorias en el circuito de Austin?",
-    options: [
-      "Sebastian Vettel",
-      "Max Verstappen",
-      "Lewis Hamilton",
-      "Charles Leclerc",
-    ],
-    correctIndex: 2,
-  },
-  {
-    id: 3,
-    category: "GP de Estados Unidos • Austin (COTA)",
-    question:
-      "¿Qué característica topográfica hace única y desafiante a la famosa Curva 1 de este trazado?",
-    options: [
-      "Un peralte invertido",
-      "Una subida muy pronunciada y ciega",
-      "Un túnel oscuro",
-      "Es la curva más estrecha del mundial",
-    ],
-    correctIndex: 1,
-  },
-  {
-    id: 4,
-    category: "GP de Estados Unidos • Austin (COTA)",
-    question:
-      "¿De cuántas curvas en total consta el trazado del Circuito de las Américas?",
-    options: ["18", "19", "20", "21"],
-    correctIndex: 2,
-  },
-  {
-    id: 5,
-    category: "GP de Estados Unidos • Austin (COTA)",
-    question:
-      "En 2018, ¿qué querido piloto rompió una larga sequía de años sin triunfos ganando magistralmente el GP de Estados Unidos con Ferrari?",
-    options: [
-      "Fernando Alonso",
-      "Carlos Sainz",
-      "Sebastian Vettel",
-      "Kimi Räikkönen",
-    ],
-    correctIndex: 3,
-  },
-];
 
 const QUESTION_TIME_MS = 15000; // 15 segundos por pregunta
 const TICK_INTERVAL_MS = 100;
 
 export default function TriviaGamePage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
+  const isAdmin =
+    isEmailInInitialAdmins(user?.email) || profile?.role === "Administrador";
+
+  // Configuración de Trivia activa (GP de México)
+  const [triviaConfig, setTriviaConfig] =
+    useState<TriviaConfig>(DEFAULT_MEXICO_TRIVIA);
 
   // Estados de verificación y bloqueo en Firestore
   const [checkingStatus, setCheckingStatus] = useState<boolean>(true);
   const [hasPlayed, setHasPlayed] = useState<boolean>(false);
   const [previousScore, setPreviousScore] = useState<number | null>(null);
   const [isSavingResult, setIsSavingResult] = useState<boolean>(false);
+  const [adminSyncing, setAdminSyncing] = useState<boolean>(false);
+  const [adminMsg, setAdminMsg] = useState<string | null>(null);
 
   // Estados del juego de Trivia
   const [currentIndex, setCurrentIndex] = useState<number>(0);
@@ -113,7 +65,9 @@ export default function TriviaGamePage() {
 
   const advanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const currentQuestion = TRIVIA_QUESTIONS[currentIndex];
+  const questions = triviaConfig.preguntas || DEFAULT_MEXICO_TRIVIA.preguntas;
+  const currentQuestion: TriviaQuestion =
+    questions[currentIndex] || questions[0];
 
   const clearAdvanceTimeout = useCallback(() => {
     if (advanceTimeoutRef.current) {
@@ -122,68 +76,49 @@ export default function TriviaGamePage() {
     }
   }, []);
 
-  // 1. Verificar al cargar si el usuario ya completó esta trivia en Firestore
-  useEffect(() => {
+  // 1. Cargar la trivia activa y verificar si el usuario ya participó
+  const loadTriviaAndUserStatus = useCallback(async () => {
     if (authLoading) return;
 
-    if (!user?.uid || !db) {
-      setCheckingStatus(false);
-      return;
-    }
+    try {
+      setCheckingStatus(true);
+      // a) Obtener configuración oficial de la trivia en Firebase
+      const active = await getActiveTrivia();
+      setTriviaConfig(active);
 
-    let isMounted = true;
-
-    const verifyTriviaStatus = async () => {
-      try {
-        setCheckingStatus(true);
-        const triviaDocRef = doc(db, "users", user.uid, "trivias", TRIVIA_ID);
-        const snap = await getDoc(triviaDocRef);
-
-        if (!isMounted) return;
-
-        if (snap.exists()) {
-          const data = snap.data();
-          const saved =
-            typeof data.score === "number"
-              ? data.score
-              : typeof data.puntaje === "number"
-              ? data.puntaje
-              : 0;
-          setPreviousScore(saved);
-          setHasPlayed(true);
-        } else {
-          setHasPlayed(false);
-        }
-      } catch (error) {
-        console.error("Error al verificar el estado de la trivia en Firestore:", error);
-      } finally {
-        if (isMounted) {
-          setCheckingStatus(false);
-        }
+      // b) Si el usuario está autenticado, comprobar si ya jugó a esta trivia específica
+      if (user?.uid) {
+        const { hasPlayed: played, score: prevScore } =
+          await checkUserTriviaStatus(user.uid, active.id);
+        setHasPlayed(played);
+        setPreviousScore(prevScore);
+      } else {
+        setHasPlayed(false);
       }
-    };
+    } catch (error) {
+      console.error("Error al cargar trivia y verificar estado:", error);
+    } finally {
+      setCheckingStatus(false);
+    }
+  }, [authLoading, user?.uid]);
 
-    verifyTriviaStatus();
+  useEffect(() => {
+    loadTriviaAndUserStatus();
+  }, [loadTriviaAndUserStatus]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [user?.uid, authLoading]);
-
-  // 2. Guardar resultado final en Firestore antes de mostrar la pantalla de resultados
+  // 2. Guardar resultado final en Firestore al completar las 5 preguntas
   const saveFinalScoreAndFinish = useCallback(
     async (finalScore: number) => {
       try {
         setIsSavingResult(true);
-        if (db && user?.uid) {
-          const triviaDocRef = doc(db, "users", user.uid, "trivias", TRIVIA_ID);
-          await setDoc(triviaDocRef, {
-            triviaId: TRIVIA_ID,
-            score: finalScore,
-            totalQuestions: TRIVIA_QUESTIONS.length,
-            fecha: new Date().toISOString(),
-            completedAt: serverTimestamp(),
-          });
+        if (user?.uid) {
+          await saveUserTriviaResult(
+            user.uid,
+            triviaConfig.id,
+            finalScore,
+            questions.length,
+            answersSummary
+          );
         }
       } catch (error) {
         console.error("Error al guardar el resultado de la trivia en Firestore:", error);
@@ -192,14 +127,14 @@ export default function TriviaGamePage() {
         setIsFinished(true);
       }
     },
-    [user?.uid]
+    [user?.uid, triviaConfig.id, questions.length, answersSummary]
   );
 
-  // Avanza a la siguiente pregunta o guarda y finaliza el cuestionario
+  // Avanza a la siguiente pregunta o guarda y finaliza
   const moveToNextQuestion = useCallback(
     (updatedScore: number) => {
       clearAdvanceTimeout();
-      if (currentIndex + 1 < TRIVIA_QUESTIONS.length) {
+      if (currentIndex + 1 < questions.length) {
         setCurrentIndex((prev) => prev + 1);
         setSelectedOption(null);
         setIsLocked(false);
@@ -208,13 +143,20 @@ export default function TriviaGamePage() {
         saveFinalScoreAndFinish(updatedScore);
       }
     },
-    [clearAdvanceTimeout, currentIndex, saveFinalScoreAndFinish]
+    [clearAdvanceTimeout, currentIndex, questions.length, saveFinalScoreAndFinish]
   );
 
-  // Procesa la selección de una opción o el vencimiento del tiempo (optionIdx = null)
+  // Procesa la selección de una opción o el vencimiento del tiempo
   const handleSelectOption = useCallback(
     (optionIdx: number | null) => {
-      if (checkingStatus || hasPlayed || isLocked || isFinished || isSavingResult) {
+      if (
+        checkingStatus ||
+        hasPlayed ||
+        isLocked ||
+        isFinished ||
+        isSavingResult ||
+        triviaConfig.estado === "finalizada"
+      ) {
         return;
       }
       setIsLocked(true);
@@ -237,10 +179,9 @@ export default function TriviaGamePage() {
         },
       ]);
 
-      // Pasar automáticamente a la siguiente pregunta tras breve feedback visual
       advanceTimeoutRef.current = setTimeout(() => {
         moveToNextQuestion(nextScore);
-      }, 650);
+      }, 700);
     },
     [
       checkingStatus,
@@ -251,12 +192,20 @@ export default function TriviaGamePage() {
       isSavingResult,
       moveToNextQuestion,
       score,
+      triviaConfig.estado,
     ]
   );
 
-  // Temporizador regresivo de 15 segundos por pregunta (pausado mientras carga o si ya jugó)
+  // Temporizador regresivo de 15 segundos
   useEffect(() => {
-    if (checkingStatus || hasPlayed || isFinished || isLocked || isSavingResult) {
+    if (
+      checkingStatus ||
+      hasPlayed ||
+      isFinished ||
+      isLocked ||
+      isSavingResult ||
+      triviaConfig.estado === "finalizada"
+    ) {
       return;
     }
 
@@ -271,9 +220,17 @@ export default function TriviaGamePage() {
     }, TICK_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [checkingStatus, currentIndex, hasPlayed, isFinished, isLocked, isSavingResult]);
+  }, [
+    checkingStatus,
+    currentIndex,
+    hasPlayed,
+    isFinished,
+    isLocked,
+    isSavingResult,
+    triviaConfig.estado,
+  ]);
 
-  // Cuando el temporizador llega a 0, avanzar automáticamente
+  // Si el temporizador llega a 0, avanza automáticamente
   useEffect(() => {
     if (
       !checkingStatus &&
@@ -281,7 +238,8 @@ export default function TriviaGamePage() {
       timeLeftMs === 0 &&
       !isLocked &&
       !isFinished &&
-      !isSavingResult
+      !isSavingResult &&
+      triviaConfig.estado === "activa"
     ) {
       handleSelectOption(null);
     }
@@ -292,6 +250,7 @@ export default function TriviaGamePage() {
     isLocked,
     isFinished,
     isSavingResult,
+    triviaConfig.estado,
     handleSelectOption,
   ]);
 
@@ -300,6 +259,24 @@ export default function TriviaGamePage() {
       clearAdvanceTimeout();
     };
   }, [clearAdvanceTimeout]);
+
+  // Función exclusiva para que el Administrador reactive la trivia en Firebase
+  const handleAdminResetAndActivate = async () => {
+    if (!isAdmin) return;
+    try {
+      setAdminSyncing(true);
+      setAdminMsg(null);
+      await resetAndPublishTrivia(DEFAULT_MEXICO_TRIVIA, false);
+      await loadTriviaAndUserStatus();
+      setAdminMsg("¡Trivia de México activada en Firebase exitosamente!");
+      setTimeout(() => setAdminMsg(null), 4000);
+    } catch (err: any) {
+      console.error("Error al reactivar trivia como admin:", err);
+      setAdminMsg(err.message || "Error al activar trivia.");
+    } finally {
+      setAdminSyncing(false);
+    }
+  };
 
   const progressRatio = Math.max(0, Math.min(1, timeLeftMs / QUESTION_TIME_MS));
   const secondsLeft = Math.ceil(timeLeftMs / 1000);
@@ -311,6 +288,47 @@ export default function TriviaGamePage() {
         <Navbar />
 
         <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6">
+          {/* BARRA SUPERIOR DE ADMINISTRADOR (SOLO ADMINS) */}
+          {isAdmin && (
+            <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs animate-in fade-in">
+              <div className="flex items-center gap-2 text-amber-300 font-bold">
+                <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  Control de Admin • Estado en Firebase:{" "}
+                  <strong className="text-white uppercase">
+                    {triviaConfig.estado}
+                  </strong>{" "}
+                  ({triviaConfig.titulo})
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {adminMsg && (
+                  <span className="text-[11px] font-bold text-emerald-400">
+                    {adminMsg}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={handleAdminResetAndActivate}
+                  disabled={adminSyncing}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-black uppercase text-[10px] tracking-wider transition-all disabled:opacity-50 cursor-pointer shadow-md"
+                >
+                  <RefreshCw
+                    className={`w-3.5 h-3.5 ${
+                      adminSyncing ? "animate-spin" : ""
+                    }`}
+                  />
+                  <span>
+                    {adminSyncing
+                      ? "Actualizando..."
+                      : "Publicar / Resetear en Firebase"}
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Barra superior de navegación */}
           <div className="flex items-center justify-between gap-4">
             <Link
@@ -321,19 +339,23 @@ export default function TriviaGamePage() {
               <span>Volver al Hub de Minijuegos</span>
             </Link>
 
-            {!checkingStatus && !hasPlayed && !isFinished && (
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#1F1F27]/80 border border-white/10 text-xs font-bold text-white">
-                <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                <span>
-                  Aciertos: <strong className="text-amber-400">{score}</strong> /{" "}
-                  {TRIVIA_QUESTIONS.length}
-                </span>
-              </div>
-            )}
+            {!checkingStatus &&
+              !hasPlayed &&
+              !isFinished &&
+              triviaConfig.estado === "activa" && (
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#1F1F27]/80 border border-white/10 text-xs font-bold text-white">
+                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                  <span>
+                    Aciertos:{" "}
+                    <strong className="text-amber-400">{score}</strong> /{" "}
+                    {questions.length}
+                  </span>
+                </div>
+              )}
           </div>
 
           {/* =============================================================== */}
-          {/* 1. ESTADO DE CARGA (EVITA PARPADEO DE PREGUNTAS)                */}
+          {/* 1. ESTADO DE CARGA                                              */}
           {/* =============================================================== */}
           {checkingStatus || isSavingResult ? (
             <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-10 sm:p-14 shadow-2xl text-center space-y-4">
@@ -344,18 +366,49 @@ export default function TriviaGamePage() {
                 <h2 className="text-lg sm:text-xl font-black text-white">
                   {isSavingResult
                     ? "Guardando tu puntaje oficial..."
-                    : "Verificando estado de la trivia..."}
+                    : "Cargando trivia del GP de México..."}
                 </h2>
                 <p className="text-xs sm:text-sm text-[#8E8E93]">
                   {isSavingResult
-                    ? "Registrando tu resultado en Firebase Firestore."
-                    : "Comprobando tu participación en el GP de Estados Unidos (Austin)."}
+                    ? "Registrando tus respuestas en Firebase Firestore."
+                    : "Comprobando la disponibilidad y tu participación en la base de datos."}
                 </p>
+              </div>
+            </div>
+          ) : triviaConfig.estado === "finalizada" ? (
+            /* =============================================================== */
+            /* 2. PANTALLA DE TRIVIA FINALIZADA                                */
+            /* =============================================================== */
+            <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-7 sm:p-10 shadow-2xl text-center space-y-8 animate-in fade-in duration-200">
+              <div className="w-20 h-20 rounded-3xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center text-zinc-400 mx-auto">
+                <Lock className="w-9 h-9" />
+              </div>
+
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-black uppercase tracking-wider">
+                  <span>Trivia Cerrada • {triviaConfig.id.toUpperCase()}</span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                  La trivia de esta semana ha finalizado
+                </h1>
+                <p className="text-xs sm:text-sm text-[#8E8E93] max-w-md mx-auto leading-relaxed">
+                  El período de participación para este Gran Premio ha cerrado. ¡Mantente atento para el próximo evento del calendario!
+                </p>
+              </div>
+
+              <div className="pt-4 border-t border-white/10 flex justify-center">
+                <Link
+                  href="/minijuegos"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-xs sm:text-sm font-black uppercase tracking-wider text-white shadow-[0_0_25px_rgba(245,158,11,0.35)] transition-all"
+                >
+                  <Gamepad2 className="w-4 h-4" />
+                  <span>Volver al Hub de Minijuegos</span>
+                </Link>
               </div>
             </div>
           ) : hasPlayed ? (
             /* =============================================================== */
-            /* 2. PANTALLA ESTÁTICA DE 'YA JUGASTE'                            */
+            /* 3. PANTALLA ESTÁTICA DE 'YA PARTICIPASTE'                        */
             /* =============================================================== */
             <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-7 sm:p-10 shadow-2xl text-center space-y-8 animate-in fade-in duration-200">
               <div className="w-20 h-20 rounded-3xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400 mx-auto shadow-[0_0_30px_rgba(245,158,11,0.2)]">
@@ -365,13 +418,15 @@ export default function TriviaGamePage() {
               <div className="space-y-2">
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-black uppercase tracking-wider">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Participación Registrada • {TRIVIA_ID.toUpperCase()}</span>
+                  <span>
+                    Participación Registrada • {triviaConfig.id.toUpperCase()}
+                  </span>
                 </div>
                 <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                  Ya completaste la trivia de esta semana
+                  Ya completaste la trivia de México de esta semana
                 </h1>
                 <p className="text-xs sm:text-sm text-[#8E8E93] max-w-md mx-auto leading-relaxed">
-                  Solo se permite un intento oficial por Gran Premio. Tu puntaje ya se encuentra guardado en tu perfil.
+                  Solo se permite un intento oficial por Gran Premio. Tu puntaje para el Gran Premio de México ya se encuentra guardado en tu perfil.
                 </p>
               </div>
 
@@ -381,7 +436,7 @@ export default function TriviaGamePage() {
                   Puntaje Obtenido
                 </p>
                 <p className="text-3xl sm:text-4xl font-black font-mono text-amber-400">
-                  {previousScore ?? 0}/{TRIVIA_QUESTIONS.length} respuestas correctas
+                  {previousScore ?? 0}/{questions.length} respuestas correctas
                 </p>
               </div>
 
@@ -397,22 +452,22 @@ export default function TriviaGamePage() {
             </div>
           ) : !isFinished ? (
             /* =============================================================== */
-            /* 3. VISTA DE PREGUNTA ACTIVA                                     */
+            /* 4. VISTA DE PREGUNTA ACTIVA                                     */
             /* =============================================================== */
             <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-6 sm:p-9 shadow-2xl space-y-7">
               {/* Cabecera: Contador de pregunta + Temporizador numérico */}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="space-y-1">
                   <span className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-amber-400">
-                    <Brain className="w-3.5 h-3.5" />
-                    {currentQuestion.category}
+                    <Flag className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>{currentQuestion.category}</span>
                   </span>
                   <p className="text-xs font-bold text-[#8E8E93]">
                     Pregunta{" "}
                     <span className="text-white font-black">
                       {currentIndex + 1}
                     </span>{" "}
-                    de {TRIVIA_QUESTIONS.length}
+                    de {questions.length}
                   </p>
                 </div>
 
@@ -428,7 +483,7 @@ export default function TriviaGamePage() {
                 </div>
               </div>
 
-              {/* Barra de Progreso del Temporizador (15 segundos) animada por transform */}
+              {/* Barra de Progreso del Temporizador (15 segundos) */}
               <div className="space-y-1.5">
                 <div className="w-full h-2.5 rounded-full bg-[#15151E] border border-white/10 overflow-hidden">
                   <div
@@ -511,7 +566,7 @@ export default function TriviaGamePage() {
             </div>
           ) : (
             /* =============================================================== */
-            /* 4. PANTALLA DE RESULTADOS FINALES (TRAS GUARDAR EN FIRESTORE)   */
+            /* 5. PANTALLA DE RESULTADOS FINALES                              */
             /* =============================================================== */
             <div className="rounded-3xl bg-[#1F1F27]/80 backdrop-blur-xl border border-white/10 p-7 sm:p-10 shadow-2xl text-center space-y-8 animate-in fade-in duration-300">
               <div className="w-20 h-20 rounded-3xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400 mx-auto shadow-[0_0_30px_rgba(245,158,11,0.25)]">
@@ -521,17 +576,19 @@ export default function TriviaGamePage() {
               <div className="space-y-2">
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-black uppercase tracking-wider">
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Puntaje Guardado • {TRIVIA_ID.toUpperCase()}</span>
+                  <span>
+                    Puntaje Guardado • {triviaConfig.id.toUpperCase()}
+                  </span>
                 </div>
                 <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-                  Resultados de tu Trivia
+                  Resultados de tu Trivia • GP de México
                 </h1>
                 <p className="text-sm text-[#8E8E93] max-w-md mx-auto">
                   {score === 5
-                    ? "¡Pleno absoluto en Austin! Tienes conocimiento de Ingeniero Jefe de Pista."
+                    ? "¡Pleno absoluto en el Hermanos Rodríguez! Tu conocimiento sobre el Gran Premio de México es legendario."
                     : score >= 3
-                    ? "¡Gran desempeño en COTA! Tu resultado quedó registrado oficialmente."
-                    : "Tu participación semanal ha quedado registrada. ¡Nos vemos en el próximo GP!"}
+                    ? "¡Gran desempeño en México! Tu resultado ha quedado registrado oficialmente."
+                    : "Tu participación en el GP de México ha quedado registrada. ¡Nos vemos en Brasil!"}
                 </p>
               </div>
 
@@ -541,11 +598,11 @@ export default function TriviaGamePage() {
                   Puntaje Total Obtenido
                 </p>
                 <p className="text-4xl sm:text-5xl font-black font-mono text-white">
-                  {score}/{TRIVIA_QUESTIONS.length}
+                  {score}/{questions.length}
                 </p>
                 <p className="text-xs font-bold text-amber-400 pt-1">
-                  {score}/{TRIVIA_QUESTIONS.length} respuestas correctas (
-                  {Math.round((score / TRIVIA_QUESTIONS.length) * 100)}%)
+                  {score}/{questions.length} respuestas correctas (
+                  {Math.round((score / questions.length) * 100)}%)
                 </p>
               </div>
 
@@ -560,7 +617,9 @@ export default function TriviaGamePage() {
                         : "bg-red-950/60 border-[#E10600]/50 text-[#E10600]"
                     }`}
                     title={`Pregunta #${idx + 1}: ${
-                      item.isCorrect ? "Correcta" : "Incorrecta / Tiempo agotado"
+                      item.isCorrect
+                        ? "Correcta"
+                        : "Incorrecta / Tiempo agotado"
                     }`}
                   >
                     #{idx + 1}

@@ -13,6 +13,8 @@ import {
   processRaceBadgesBatch,
   ProcessBadgesResult,
 } from "@/lib/firebase/badgeService";
+import { resetAndPublishTrivia } from "@/lib/firebase/triviaService";
+import { DEFAULT_MEXICO_TRIVIA } from "@/data/triviaData";
 import { OfficialRaceResults } from "@/utils/badgeEvaluator";
 import { BADGES_DATA } from "@/data/badgesData";
 import {
@@ -45,6 +47,8 @@ import {
   Timer,
   ChevronDown,
   ChevronUp,
+  Brain,
+  RefreshCw,
 } from "lucide-react";
 
 export default function AdminPage() {
@@ -191,8 +195,33 @@ function AdminPanelContent({
   const [operationSummary, setOperationSummary] =
     useState<OperationSummary | null>(null);
 
-  // Panel secundario colapsable de Seed
+  // Panel secundario colapsable de Seed y Trivia
   const [showSeedCard, setShowSeedCard] = useState(false);
+  const [isReactivatingTrivia, setIsReactivatingTrivia] = useState(false);
+
+  const handleReactivateTrivia = async () => {
+    try {
+      setIsReactivatingTrivia(true);
+      await resetAndPublishTrivia(DEFAULT_MEXICO_TRIVIA, true);
+      setToast({
+        show: true,
+        type: "success",
+        title: "¡Trivia de México Activada con Éxito!",
+        message:
+          "Se actualizaron las 5 preguntas oficiales en Firestore con estado 'activa' y se reseteó la disponibilidad para todos los usuarios.",
+      });
+    } catch (err: any) {
+      console.error("Error al reactivar trivia:", err);
+      setToast({
+        show: true,
+        type: "error",
+        title: "Error al Reactivar Trivia",
+        message: err.message || "No se pudo actualizar la trivia en Firebase.",
+      });
+    } finally {
+      setIsReactivatingTrivia(false);
+    }
+  };
 
   // Sincronizar formulario completo cuando cambia el GP seleccionado
   useEffect(() => {
@@ -1367,6 +1396,57 @@ function AdminPanelContent({
           </button>
         </div>
       </form>
+
+      {/* ================================================================= */}
+      {/* SECCIÓN TRIVIA SEMANAL • GP DE MÉXICO                             */}
+      {/* ================================================================= */}
+      <div className="rounded-2xl bg-gradient-to-r from-amber-500/10 via-[#1F1F27] to-[#1F1F27] border border-amber-500/40 p-6 flex flex-col md:flex-row md:items-center justify-between gap-5 shadow-xl">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-xs font-black uppercase text-amber-400 tracking-wider">
+              Trivia Semanal • Gran Premio de la Ciudad de México
+            </span>
+            <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-black uppercase px-2 py-0.5 rounded">
+              Estado: ACTIVA
+            </span>
+          </div>
+          <h3 className="text-sm sm:text-base font-black text-white">
+            5 Preguntas Oficiales del Autódromo Hermanos Rodríguez
+          </h3>
+          <p className="text-xs text-[#8E8E93] max-w-xl">
+            Reemplaza las preguntas anteriores con las 5 preguntas oficiales de México y reactiva el estado en Firebase a &apos;activa&apos; para todos los usuarios.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/minijuegos/trivia"
+            className="inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-[#15151E] border border-[#2D2D38] hover:border-white/30 text-xs font-bold text-white transition-all shadow-md"
+          >
+            <Brain className="w-4 h-4 text-amber-400" />
+            <span>Probar Trivia en Vivo</span>
+          </Link>
+
+          <button
+            type="button"
+            onClick={handleReactivateTrivia}
+            disabled={isReactivatingTrivia}
+            className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-xs font-black uppercase tracking-wider text-white shadow-[0_0_20px_rgba(245,158,11,0.35)] disabled:opacity-50 transition-all cursor-pointer"
+          >
+            {isReactivatingTrivia ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            <span>
+              {isReactivatingTrivia
+                ? "Publicando en Firebase..."
+                : "Reactivar Trivia en Firebase"}
+            </span>
+          </button>
+        </div>
+      </div>
 
       {/* ================================================================= */}
       {/* SECCIÓN SECUNDARIA: GESTIÓN DE BASE DE DATOS (SEED / RESETEO)    */}
