@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Navbar, isEmailInInitialAdmins } from "@/components/Navbar";
 import { AdminSeedCard } from "@/components/AdminSeedCard";
+import { AdminDriverStatsTab } from "@/components/AdminDriverStatsTab";
 import { useAuth } from "@/context/AuthContext";
 import { useF1Data } from "@/context/F1DataContext";
 import { GrandPrix, ResultadosOficiales } from "@/types/f1";
@@ -152,6 +153,11 @@ function AdminPanelContent({
 
   const selectedGp: GrandPrix | undefined =
     grandPrixList.find((g) => g.id === selectedGpId) || grandPrixList[0];
+
+  // Subpestañas del Panel de Administración
+  const [activeAdminTab, setActiveAdminTab] = useState<
+    "resultados" | "estadisticas_pilotos"
+  >("resultados");
 
   // =========================================================================
   // ESTADOS DEL FORMULARIO ÚNICO DE RESULTADOS OFICIALES
@@ -715,9 +721,53 @@ function AdminPanelContent({
       </div>
 
       {/* ================================================================= */}
-      {/* FORMULARIO ÚNICO SIN PASOS                                        */}
+      {/* SELECTOR DE SUBPESTAÑAS DEL PANEL ADMIN                           */}
       {/* ================================================================= */}
-      <form onSubmit={handleSaveAndCalculate} className="space-y-8">
+      <div className="flex flex-wrap items-center gap-3 border-b border-[#2D2D38] pb-4">
+        <button
+          type="button"
+          onClick={() => setActiveAdminTab("resultados")}
+          className={`flex items-center gap-2.5 px-5 py-3 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition-all cursor-pointer ${
+            activeAdminTab === "resultados"
+              ? "bg-[#E10600] text-white shadow-[0_0_20px_rgba(225,6,0,0.4)]"
+              : "bg-[#1F1F27] text-[#8E8E93] hover:text-white border border-[#2D2D38] hover:border-white/20"
+          }`}
+        >
+          <Trophy className="w-4 h-4" />
+          <span>Carga de Resultados Oficiales</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveAdminTab("estadisticas_pilotos")}
+          className={`flex items-center gap-2.5 px-5 py-3 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition-all cursor-pointer ${
+            activeAdminTab === "estadisticas_pilotos"
+              ? "bg-[#E10600] text-white shadow-[0_0_20px_rgba(225,6,0,0.4)]"
+              : "bg-[#1F1F27] text-[#8E8E93] hover:text-white border border-[#2D2D38] hover:border-white/20"
+          }`}
+        >
+          <Flame className="w-4 h-4 text-amber-400" />
+          <span>Estadísticas F1 (Pilotos)</span>
+        </button>
+      </div>
+
+      {activeAdminTab === "estadisticas_pilotos" ? (
+        <AdminDriverStatsTab
+          selectedGp={selectedGp}
+          pilotos={pilotos}
+          escuderias={escuderias}
+          getEscuderia={getEscuderia}
+          onStatsUpdated={async () => {
+            await refreshData();
+            await onScoresUpdated();
+          }}
+        />
+      ) : (
+        <>
+          {/* ================================================================= */}
+          {/* FORMULARIO ÚNICO SIN PASOS                                        */}
+          {/* ================================================================= */}
+          <form onSubmit={handleSaveAndCalculate} className="space-y-8">
         {/* SECCIÓN 1: CLASIFICACIÓN / GRILLA (Q1, Q2, Q3) */}
         <div className="rounded-2xl bg-[#1F1F27] border border-[#2D2D38] p-6 sm:p-7 space-y-6 shadow-xl">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-[#2D2D38]">
@@ -1481,6 +1531,8 @@ function AdminPanelContent({
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

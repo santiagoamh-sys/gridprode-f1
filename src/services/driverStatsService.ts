@@ -75,27 +75,27 @@ export function getDefaultDriverStats(driverId: string): DriverStats {
 }
 
 /**
- * Sincroniza y devuelve las estadísticas actualizadas del piloto desde pilotsData.ts
- * y persiste en segundo plano en Firestore ('drivers_stats') si está configurado.
+ * Sincroniza y devuelve las estadísticas actualizadas del piloto desde Firestore ('drivers_stats'),
+ * con fallback a pilotsData.ts si aún no existe en base de datos.
  */
 export async function fetchDriverStats(driverId: string): Promise<DriverStats> {
   const upperId = (driverId || "").toUpperCase();
-  const authoritativeStats = getDefaultDriverStats(upperId);
+  const fallbackStats = getDefaultDriverStats(upperId);
 
   try {
-    if (db && DEFAULT_DRIVERS_STATS[upperId]) {
-      const docRef = doc(db, "drivers_stats", upperId);
-      setDoc(docRef, authoritativeStats, { merge: true }).catch(() => {});
-    } else if (db) {
+    if (db) {
       const docRef = doc(db, "drivers_stats", upperId);
       const snap = await getDoc(docRef);
       if (snap.exists()) {
         return snap.data() as DriverStats;
+      } else if (DEFAULT_DRIVERS_STATS[upperId]) {
+        // Inicializar por primera vez en Firestore si no existe
+        setDoc(docRef, fallbackStats, { merge: true }).catch(() => {});
       }
     }
   } catch (error) {
-    console.warn(`[fetchDriverStats] Aviso al sincronizar ${upperId}:`, error);
+    console.warn(`[fetchDriverStats] Aviso al consultar ${upperId}:`, error);
   }
 
-  return authoritativeStats;
+  return fallbackStats;
 }
