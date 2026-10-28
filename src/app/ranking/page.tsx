@@ -505,6 +505,55 @@ function RankingContent() {
                               | DesglosePuntos
                               | undefined;
 
+                            // Cálculos de desglose unificado
+                            const ptsPodio = Number(d?.carrera_total) || 0;
+                            const ptsVueltaRapidaCarrera =
+                              (d as any)?.vuelta_rapida !== undefined
+                                ? Number((d as any).vuelta_rapida) || 0
+                                : pred?.respuestas?.vuelta_rapida &&
+                                  gp.resultados_oficiales?.vuelta_rapida &&
+                                  pred.respuestas.vuelta_rapida ===
+                                    gp.resultados_oficiales.vuelta_rapida
+                                ? 1
+                                : 0;
+                            const ptsPilotoDelDia =
+                              Number(d?.piloto_del_dia) || 0;
+                            const ptsColapinto =
+                              Number(d?.posicion_colapinto) || 0;
+                            const ptsDnf = Number(d?.dnf) || 0;
+                            const ptsEscuderia = Number(d?.escuderia) || 0;
+
+                            const rawEspeciales =
+                              d &&
+                              (d.piloto_del_dia !== undefined ||
+                                d.posicion_colapinto !== undefined ||
+                                d.dnf !== undefined ||
+                                d.escuderia !== undefined)
+                                ? ptsPilotoDelDia +
+                                  ptsColapinto +
+                                  ptsDnf +
+                                  ptsEscuderia
+                                : Math.max(
+                                    0,
+                                    (Number(d?.especiales_total) || 0) -
+                                      (scoreDetail?.bonoVr || (wonVr ? 1 : 0))
+                                  );
+
+                            // Caja CARRERA: Podio (P1, P2, P3) + VR Carrera + DOTD + Colapinto + DNF + Escudería
+                            const puntosCarrera =
+                              ptsPodio + ptsVueltaRapidaCarrera + rawEspeciales;
+
+                            // Caja SPRINT: Pole, P1, P2 y P3 de Sprint
+                            const puntosSprint = Number(d?.sprint_total) || 0;
+
+                            // Caja EXTRAS: Únicamente puntos extra ganados en el minijuego semanal de Vuelta Rápida
+                            const puntosExtras =
+                              scoreDetail?.bonoVr !== undefined
+                                ? scoreDetail.bonoVr
+                                : wonVr || pred?.bonus_vuelta_rapida === 1
+                                ? 1
+                                : 0;
+
                             return (
                               <div
                                 key={gp.id}
@@ -555,7 +604,7 @@ function RankingContent() {
                                           Q1
                                         </span>
                                         <strong className="font-mono text-white">
-                                          {d.q1}
+                                          {d.q1 ?? 0}
                                         </strong>
                                       </div>
                                       <div className="bg-[#15151E] p-1.5 rounded text-center">
@@ -563,7 +612,7 @@ function RankingContent() {
                                           Q2
                                         </span>
                                         <strong className="font-mono text-white">
-                                          {d.q2}
+                                          {d.q2 ?? 0}
                                         </strong>
                                       </div>
                                       <div className="bg-[#15151E] p-1.5 rounded text-center">
@@ -571,15 +620,18 @@ function RankingContent() {
                                           Q3
                                         </span>
                                         <strong className="font-mono text-white">
-                                          {d.q3_total}
+                                          {d.q3_total ?? 0}
                                         </strong>
                                       </div>
-                                      <div className="bg-[#15151E] p-1.5 rounded text-center">
+                                      <div
+                                        className="bg-[#15151E] p-1.5 rounded text-center"
+                                        title={`Carrera: Podio (${ptsPodio}) + VR Carrera (${ptsVueltaRapidaCarrera}) + DOTD (${ptsPilotoDelDia}) + Colapinto (${ptsColapinto}) + DNF (${ptsDnf}) + Escudería (${ptsEscuderia})`}
+                                      >
                                         <span className="block text-[9px] text-[#8E8E93] uppercase">
-                                          Podio
+                                          Carrera
                                         </span>
                                         <strong className="font-mono text-white">
-                                          {d.carrera_total}
+                                          {puntosCarrera}
                                         </strong>
                                       </div>
                                       <div className="bg-[#15151E] p-1.5 rounded text-center">
@@ -587,15 +639,24 @@ function RankingContent() {
                                           Sprint
                                         </span>
                                         <strong className="font-mono text-white">
-                                          {d.sprint_total}
+                                          {puntosSprint}
                                         </strong>
                                       </div>
-                                      <div className="bg-[#15151E] p-1.5 rounded text-center">
+                                      <div
+                                        className="bg-[#15151E] p-1.5 rounded text-center"
+                                        title="Puntos extra ganados en el minijuego semanal de Vuelta Rápida"
+                                      >
                                         <span className="block text-[9px] text-[#8E8E93] uppercase">
                                           Extras
                                         </span>
-                                        <strong className="font-mono text-white">
-                                          {d.especiales_total}
+                                        <strong
+                                          className={`font-mono ${
+                                            puntosExtras > 0
+                                              ? "text-emerald-400 font-black"
+                                              : "text-white"
+                                          }`}
+                                        >
+                                          {puntosExtras}
                                         </strong>
                                       </div>
                                     </div>
