@@ -2,6 +2,8 @@
 
 import React, { useEffect, useState } from "react";
 import Image from "next/image";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
 import { Piloto, DriverStats } from "@/types/f1";
 import { useF1Data } from "@/context/F1DataContext";
 import {
@@ -39,12 +41,14 @@ export const DriverModal: React.FC<DriverModalProps> = ({
 }) => {
   const { getEscuderia } = useF1Data();
   const [stats, setStats] = useState<DriverStats | null>(null);
+  const [liveDriver, setLiveDriver] = useState<Piloto | null>(null);
   const [loadingStats, setLoadingStats] = useState<boolean>(true);
 
   // Consulta asíncrona robusta combinando API pública y Firestore
   useEffect(() => {
     if (!isOpen || !driver) {
       setStats(null);
+      setLiveDriver(null);
       setLoadingStats(true);
       return;
     }
@@ -52,7 +56,9 @@ export const DriverModal: React.FC<DriverModalProps> = ({
     let isMounted = true;
     setLoadingStats(true);
     setStats(null);
+    setLiveDriver(null);
 
+    // 1. Obtener estadísticas de temporada y perfil biográfico desde drivers_stats
     fetchDriverStats(driver.id)
       .then((data) => {
         if (isMounted) {
@@ -63,7 +69,6 @@ export const DriverModal: React.FC<DriverModalProps> = ({
       .catch((err) => {
         console.error("Error al obtener estadísticas del piloto:", err);
         if (isMounted) {
-          // Si ambas fuentes fallan, proveemos un fallback por defecto sin romper la UI
           setStats({
             driverId: driver.id,
             posicion_campeonato: 0,
@@ -80,6 +85,19 @@ export const DriverModal: React.FC<DriverModalProps> = ({
           setLoadingStats(false);
         }
       });
+
+    // 2. Obtener documento en tiempo real desde la colección 'pilotos' en Firestore
+    if (db) {
+      getDoc(doc(db, "pilotos", driver.id))
+        .then((snap) => {
+          if (isMounted && snap.exists()) {
+            setLiveDriver(snap.data() as Piloto);
+          }
+        })
+        .catch((err) => {
+          console.warn("No se pudo obtener documento en vivo de pilotos:", err);
+        });
+    }
 
     return () => {
       isMounted = false;
@@ -259,85 +277,124 @@ export const DriverModal: React.FC<DriverModalProps> = ({
           {/* ========================================== */}
           {/* 2. SECCIÓN PERFIL BIOGRÁFICO (ESTÁTICOS)   */}
           {/* ========================================== */}
-          <div className="p-5 sm:p-6 border-b border-[#2D2D38]/80 bg-[#15151E]/60">
-            <div className="flex items-center gap-2 mb-3.5">
-              <User className="w-4 h-4 text-[#E10600]" />
-              <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">
-                Perfil Biográfico
-              </h3>
-            </div>
+          {/* ========================================== */}
+          {/* 2. SECCIÓN PERFIL BIOGRÁFICO (HISTÓRICO)   */}
+          {/* ========================================== */}
+          {(() => {
+            const resolvedCarreras =
+              stats?.carreras_totales ??
+              (stats as any)?.carreras ??
+              liveDriver?.carreras_totales ??
+              (liveDriver as any)?.carreras ??
+              driver.carreras_totales ??
+              (driver as any)?.carreras;
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-              {/* Edad */}
-              <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
-                  Edad
-                </span>
-                <span className="text-base sm:text-lg font-black text-white font-mono">
-                  {driver.edad ? `${driver.edad} años` : "—"}
-                </span>
-              </div>
+            const resolvedVictorias =
+              stats?.victorias_totales ??
+              (stats as any)?.victorias ??
+              liveDriver?.victorias_totales ??
+              (liveDriver as any)?.victorias ??
+              driver.victorias_totales ??
+              (driver as any)?.victorias;
 
-              {/* Año Debut */}
-              <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
-                  Debut F1
-                </span>
-                <span className="text-base sm:text-lg font-black text-white font-mono">
-                  {driver.debut_anio ? driver.debut_anio : "—"}
-                </span>
-              </div>
+            const resolvedPodios =
+              stats?.podios_totales ??
+              (stats as any)?.podios ??
+              liveDriver?.podios_totales ??
+              (liveDriver as any)?.podios ??
+              driver.podios_totales ??
+              (driver as any)?.podios;
 
-              {/* Carreras Históricas */}
-              <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
-                  Carreras
-                </span>
-                <span className="text-base sm:text-lg font-black text-white font-mono">
-                  {driver.carreras_totales !== undefined ? driver.carreras_totales : "—"}
-                </span>
-              </div>
+            const resolvedEdad = liveDriver?.edad ?? driver.edad;
+            const resolvedDebut = liveDriver?.debut_anio ?? driver.debut_anio;
+            const resolvedMundiales =
+              liveDriver?.titulos_mundiales ??
+              (liveDriver as any)?.campeonatos ??
+              driver.titulos_mundiales ??
+              (driver as any)?.campeonatos;
 
-              {/* Campeonatos Mundiales */}
-              <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
-                  Mundiales
-                </span>
-                <div className="flex items-center gap-1.5">
-                  {(driver.titulos_mundiales || 0) > 0 && (
-                    <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
-                  )}
-                  <span
-                    className={`text-base sm:text-lg font-black font-mono ${
-                      (driver.titulos_mundiales || 0) > 0 ? "text-amber-400" : "text-white"
-                    }`}
-                  >
-                    {driver.titulos_mundiales !== undefined ? driver.titulos_mundiales : "—"}
-                  </span>
+            return (
+              <div className="p-5 sm:p-6 border-b border-[#2D2D38]/80 bg-[#15151E]/60">
+                <div className="flex items-center gap-2 mb-3.5">
+                  <User className="w-4 h-4 text-[#E10600]" />
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">
+                    Perfil Biográfico
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                  {/* Edad */}
+                  <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
+                      Edad
+                    </span>
+                    <span className="text-base sm:text-lg font-black text-white font-mono">
+                      {resolvedEdad ? `${resolvedEdad} años` : "—"}
+                    </span>
+                  </div>
+
+                  {/* Año Debut */}
+                  <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
+                      Debut F1
+                    </span>
+                    <span className="text-base sm:text-lg font-black text-white font-mono">
+                      {resolvedDebut ? resolvedDebut : "—"}
+                    </span>
+                  </div>
+
+                  {/* Carreras Históricas */}
+                  <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
+                      Carreras
+                    </span>
+                    <span className="text-base sm:text-lg font-black text-white font-mono">
+                      {resolvedCarreras !== undefined ? resolvedCarreras : "—"}
+                    </span>
+                  </div>
+
+                  {/* Campeonatos Mundiales */}
+                  <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
+                      Mundiales
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {(resolvedMundiales || 0) > 0 && (
+                        <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+                      )}
+                      <span
+                        className={`text-base sm:text-lg font-black font-mono ${
+                          (resolvedMundiales || 0) > 0 ? "text-amber-400" : "text-white"
+                        }`}
+                      >
+                        {resolvedMundiales !== undefined ? resolvedMundiales : "—"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Victorias Históricas */}
+                  <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
+                      Victorias
+                    </span>
+                    <span className="text-base sm:text-lg font-black text-white font-mono">
+                      {resolvedVictorias !== undefined ? resolvedVictorias : "—"}
+                    </span>
+                  </div>
+
+                  {/* Podios Históricos */}
+                  <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
+                      Podios
+                    </span>
+                    <span className="text-base sm:text-lg font-black text-white font-mono">
+                      {resolvedPodios !== undefined ? resolvedPodios : "—"}
+                    </span>
+                  </div>
                 </div>
               </div>
-
-              {/* Victorias Históricas */}
-              <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
-                  Victorias
-                </span>
-                <span className="text-base sm:text-lg font-black text-white font-mono">
-                  {driver.victorias_totales !== undefined ? driver.victorias_totales : "—"}
-                </span>
-              </div>
-
-              {/* Podios Históricos */}
-              <div className="bg-[#1F1F27]/80 border border-[#2D2D38] rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E8E93] mb-1">
-                  Podios
-                </span>
-                <span className="text-base sm:text-lg font-black text-white font-mono">
-                  {driver.podios_totales !== undefined ? driver.podios_totales : "—"}
-                </span>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* ========================================== */}
           {/* 3. SECCIÓN RENDIMIENTO TEMPORADA (DINÁMICOS) */}

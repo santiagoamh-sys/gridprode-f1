@@ -62,6 +62,7 @@ export const AdminDriverStatsTab: React.FC<AdminDriverStatsTabProps> = ({
   // Estados de proceso y feedback
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [allowReprocess, setAllowReprocess] = useState<boolean>(false);
+  const [syncMode, setSyncMode] = useState<"bio_only" | "full">("bio_only");
   const [summaryResult, setSummaryResult] = useState<UpdateDriverStatsResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -281,6 +282,8 @@ export const AdminDriverStatsTab: React.FC<AdminDriverStatsTabProps> = ({
       return;
     }
 
+    const isBioOnly = isAlreadyProcessed && syncMode === "bio_only";
+
     try {
       setIsProcessing(true);
       setErrorMsg(null);
@@ -299,11 +302,14 @@ export const AdminDriverStatsTab: React.FC<AdminDriverStatsTabProps> = ({
         qualyPositions: qualyList,
         racePositions: racePayload,
         sprintTop8: selectedGp.isSprint ? sprintList.slice(0, 8) : [],
+        syncBiographicalOnly: isBioOnly,
       });
 
       setSummaryResult(result);
       setSuccessMsg(
-        `¡Estadísticas de los ${result.updatedDriversCount} pilotos actualizadas exitosamente en Firebase!`
+        isBioOnly
+          ? `¡Perfil Biográfico de los ${result.updatedDriversCount} pilotos sincronizado exitosamente (carreras, victorias y podios históricos actualizados sin duplicar puntos ni victorias anuales)!`
+          : `¡Estadísticas completas de los ${result.updatedDriversCount} pilotos actualizadas exitosamente en Firebase!`
       );
       await onStatsUpdated();
     } catch (err: any) {
@@ -361,14 +367,55 @@ export const AdminDriverStatsTab: React.FC<AdminDriverStatsTabProps> = ({
 
         {/* Alerta de Idempotencia si el GP ya fue procesado */}
         {isAlreadyProcessed && (
-          <div className="rounded-xl bg-amber-500/15 border border-amber-500/40 p-4 space-y-2">
+          <div className="rounded-xl bg-amber-500/15 border border-amber-500/40 p-4 space-y-3">
             <div className="flex items-center gap-2 text-amber-300 font-black text-xs uppercase tracking-wider">
               <AlertTriangle className="w-4 h-4 text-amber-400" />
               <span>Estadísticas Ya Procesadas para este Gran Premio</span>
             </div>
             <p className="text-xs text-amber-100 leading-relaxed">
-              Este Gran Premio ya tiene su flag de procesamiento activo en Firebase. Para evitar duplicar victorias, podios y puntos de forma involuntaria, el botón de guardado está protegido.
+              Este Gran Premio ya tiene su flag de procesamiento activo en Firebase. Para evitar duplicar victorias, podios y puntos de forma involuntaria, selecciona cómo deseas proceder:
             </p>
+
+            <div className="space-y-2 pt-1">
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[#15151E] border border-amber-500/40 cursor-pointer">
+                <input
+                  type="radio"
+                  name="syncMode"
+                  value="bio_only"
+                  checked={syncMode === "bio_only"}
+                  onChange={() => setSyncMode("bio_only")}
+                  className="mt-0.5 text-[#E10600] focus:ring-[#E10600]"
+                />
+                <div className="text-xs">
+                  <span className="font-bold text-white block">
+                    Sincronizar únicamente Perfil Biográfico (carreras, victorias y podios históricos)
+                  </span>
+                  <span className="text-[11px] text-[#8E8E93]">
+                    Recomendado: actualiza los contadores biográficos faltantes sin duplicar los puntos del campeonato ni las victorias anuales ya sumadas.
+                  </span>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[#15151E] border border-white/10 cursor-pointer">
+                <input
+                  type="radio"
+                  name="syncMode"
+                  value="full"
+                  checked={syncMode === "full"}
+                  onChange={() => setSyncMode("full")}
+                  className="mt-0.5 text-[#E10600] focus:ring-[#E10600]"
+                />
+                <div className="text-xs">
+                  <span className="font-bold text-white block">
+                    Recalcular completamente (suma puntos y victorias anuales nuevamente)
+                  </span>
+                  <span className="text-[11px] text-[#8E8E93]">
+                    Vuelve a sumar puntos de carrera y sprint, cortes clasificatorios y duelos H2H.
+                  </span>
+                </div>
+              </label>
+            </div>
+
             <label className="flex items-center gap-2 pt-1 cursor-pointer">
               <input
                 type="checkbox"
@@ -377,7 +424,7 @@ export const AdminDriverStatsTab: React.FC<AdminDriverStatsTabProps> = ({
                 className="w-4 h-4 rounded border-amber-400 text-[#E10600] focus:ring-[#E10600]"
               />
               <span className="text-xs font-bold text-amber-200">
-                He revisado las posiciones y deseo forzar la actualización de estadísticas.
+                He verificado los datos y confirmo la ejecución de la actualización.
               </span>
             </label>
           </div>
@@ -844,6 +891,9 @@ export const AdminDriverStatsTab: React.FC<AdminDriverStatsTabProps> = ({
                   </div>
 
                   <div className="flex items-center gap-4">
+                    <span className="text-[11px] font-mono text-zinc-300 hidden sm:inline-block">
+                      {item.carrerasTotales} carr • {item.victoriasTotales} vict • {item.podiosTotales} pod
+                    </span>
                     {item.puntosSumados > 0 && (
                       <span className="text-[11px] font-bold text-emerald-400">
                         +{item.puntosSumados} pts

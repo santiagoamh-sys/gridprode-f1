@@ -116,9 +116,28 @@ export async function getPilotos(): Promise<Piloto[]> {
           !stored.foto_url.includes("wikimedia.org") &&
           !stored.foto_url.includes("wikipedia.org");
 
+        const storedCarreras =
+          stored?.carreras_totales ?? (stored as any)?.carreras;
+        const storedVictorias =
+          stored?.victorias_totales ?? (stored as any)?.victorias;
+        const storedPodios =
+          stored?.podios_totales ?? (stored as any)?.podios;
+
         return {
-          ...stored,
           ...initialDriver,
+          ...stored,
+          carreras_totales:
+            storedCarreras !== undefined
+              ? storedCarreras
+              : initialDriver.carreras_totales,
+          victorias_totales:
+            storedVictorias !== undefined
+              ? storedVictorias
+              : initialDriver.victorias_totales,
+          podios_totales:
+            storedPodios !== undefined
+              ? storedPodios
+              : initialDriver.podios_totales,
           foto_url: hasValidCustomPhoto ? stored.foto_url : initialDriver.foto_url,
         };
       });

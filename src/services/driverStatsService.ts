@@ -11,6 +11,12 @@ export const DEFAULT_DRIVERS_STATS: Record<string, DriverStats> = Object.fromEnt
     p.codigo,
     {
       driverId: p.codigo,
+      carreras_totales: p.carreras,
+      carreras: p.carreras,
+      victorias_totales: p.victorias,
+      victorias: p.victorias,
+      podios_totales: p.podios,
+      podios: p.podios,
       posicion_campeonato: p.posicion,
       puntos_campeonato: p.puntos,
       h2h_qualy: {
@@ -56,6 +62,12 @@ export function getDefaultDriverStats(driverId: string): DriverStats {
   }
   return {
     driverId: upper,
+    carreras_totales: 0,
+    carreras: 0,
+    victorias_totales: 0,
+    victorias: 0,
+    podios_totales: 0,
+    podios: 0,
     posicion_campeonato: 0,
     puntos_campeonato: 0,
     h2h_qualy: {

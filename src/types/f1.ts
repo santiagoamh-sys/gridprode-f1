@@ -23,6 +23,13 @@ export interface Piloto {
 
 export interface DriverStats {
   driverId: string;
+  // Perfil Biográfico Histórico (Sincronizado)
+  carreras_totales?: number;
+  carreras?: number;
+  victorias_totales?: number;
+  victorias?: number;
+  podios_totales?: number;
+  podios?: number;
   // Campeonato
   posicion_campeonato: number;
   puntos_campeonato: number;
